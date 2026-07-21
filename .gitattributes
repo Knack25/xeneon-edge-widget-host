@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts must use Unix line endings. A CRLF shebang makes Linux look for
+# an interpreter named /bin/bash\r and fail with "required file not found".
+*.sh text eol=lf

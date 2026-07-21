@@ -33,7 +33,7 @@ start_web_server() {
 
 start_electron_app() {
     if [ -f "node_modules/electron/dist/electron" ] && [ -f "scripts/start-electron.js" ]; then
-        node scripts/start-electron.js "$(pwd)" &
+        "$NODE_CMD" scripts/start-electron.js "$(pwd)" &
     else
         echo "Electron was not found under node_modules."
         echo "To enable Electron mode, run 'npm install' from the app folder."

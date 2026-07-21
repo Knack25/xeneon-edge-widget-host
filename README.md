@@ -1,54 +1,66 @@
-# iCUE Widget Runner — Raspberry Pi OS
+# Raspi iCUE Widget Runner Engine
 
-This runner folder is configured for the Raspberry Pi build of the widget runner. The current target system is **Raspberry Pi OS based on Debian 13 "trixie"**, running on **aarch64**, with **PipeWire** providing PulseAudio compatibility.
+Raspberry Pi OS runner for browser-style CORSAIR iCUE widgets. The app hosts
+widgets from the local `widgets/` folder, injects a small iCUE compatibility
+shim, and displays the selected widget in an Electron window or Chromium app
+mode.
 
-The key difference from the Windows build: the VU Meter and Spectrum Analyzer no longer use the old Windows WASAPI/C# audio bridge. They now use **Node.js + FFmpeg** to capture the PipeWire/PulseAudio monitor source for the current default audio output.
+The application is self-contained in the repository root.
 
----
+## What the App Does
 
-## Prerequisites
+Raspi iCUE Widget Runner Engine brings browser-style CORSAIR iCUE widgets to Raspberry Pi OS. It discovers compatible widgets stored on the device, presents them in a simple launcher, and runs the selected experience in an Electron window or Chromium app mode. An iCUE compatibility layer helps widgets operate outside the full desktop iCUE runtime, while optional local audio bridges enable experiences such as live VU meters and spectrum analyzers.
 
-Install these once on the Raspberry Pi:
+## Use Case Scenario
+
+A customer may have a Raspberry Pi connected to a XENEON EDGE display as part of a desk, gaming room, streaming station, workshop, or home-entertainment setup. After starting the runner, the customer can browse the available widgets and select an experience such as an audio visualizer, clock face, air-quality display, or drawing surface. The Pi can then serve as a dedicated, always-available information or ambient display without requiring the primary PC screen to remain occupied.
+
+The runner is also useful for prototyping. Designers and developers can place a compatible web widget in the local `widgets/` folder, launch it in the runner, and evaluate its appearance, interaction model, performance, and suitability for a small or touch-enabled display.
+
+- **VU Stereo Meter:** Its full-frame canvas effects may stutter at high display
+  resolutions on older Pis; use a simpler theme, smaller window, or `vu` mode.
+- **Spectrum Analyzer:** Real-time FFmpeg capture, FFT processing, glow, and
+  reflections are more demanding; reduce bars/effects or use a cooled Pi 5.
+
+## Disclaimer and License
+
+This project is an experimental utility developed for internal testing, evaluation, and educational purposes. It is not an official Corsair product and is not affiliated with, endorsed by, or supported by Corsair.
+
+This software is provided as-is, without warranty or support. Use is at your own risk. The authors and copyright holders disclaim all responsibility for any damages, losses, or issues arising from the use of this software.
+
+This project is released under a non-commercial license. You may use, copy, modify, and redistribute it for personal, educational, research, or internal testing purposes only. Commercial use is expressly prohibited without prior written permission from the copyright holder.
+
+See the [LICENSE](LICENSE) file for the full text.
+
+### Prerequisites
+
+On Raspberry Pi OS, install:
 
 ```bash
 sudo apt update
 sudo apt install -y nodejs npm ffmpeg pipewire pipewire-pulse wireplumber pulseaudio-utils chromium
 ```
 
-### What each piece does
-
-| Dependency              | Role                                                                |
-| ----------------------- | ------------------------------------------------------------------- |
-| Node.js & npm           | Run the web server, Electron launcher, and audio bridges            |
-| npm dependencies        | Install Electron and `fft.js` (see `npm install` below)             |
-| FFmpeg                  | Capture raw audio from the PulseAudio compatibility layer           |
-| PipeWire / pipewire-pulse / WirePlumber | Provide the desktop audio server                               |
-| pulseaudio-utils        | Provides `pactl`, used to find the correct monitor source           |
-| Chromium                | Optional fallback if Electron is not installed or cannot start      |
-
-### Install Node dependencies
+Clone the repository and install its Node.js dependencies:
 
 ```bash
-cd ~/PROJECTS/RASPI/Raspi_iCue_Widget_Runner_Engine/icue-widget-runner-raspi
+git clone git@github.com:jlcorsair/Raspi_iCue_Widget_Runner_Engine.git
+cd Raspi_iCue_Widget_Runner_Engine
 npm install
-```
-
-This installs:
-
-- **electron** — used by the normal app window
-- **fft.js** — used by the Spectrum Analyzer bridge
-
-### Make the launcher executable
-
-```bash
 chmod +x run-all.sh
 ```
 
----
+Run `npm install` in every fresh clone (and after replacing the project
+directory); system packages installed with `apt` do not provide this project's
+local Electron and `fft.js` dependencies.
 
-## Quick verification
+The launcher is a Bash script for Linux/Raspberry Pi OS. The `.sh` extension
+does not make it a Windows script. It must have Unix (LF) line endings; this
+repository enforces them through `.gitattributes`.
 
-Check the basics:
+### Quick Verification
+
+Check that the required tools are available:
 
 ```bash
 node --version
@@ -58,156 +70,58 @@ pactl info
 pactl list short sources
 ```
 
-FFmpeg must list the `pulse` input device. `pactl info` should report something like:
-
-```
-Server Name: PulseAudio (on PipeWire ...)
-```
-
-The source list should include one or more entries ending in `.monitor`. Those monitor sources are what the audio bridges use to capture system playback.
-
-On this Raspberry Pi, the current default output monitor was detected as:
-
-```
-alsa_output.usb-Cosair_Corsair_VOID_ELITE_Surround_USB_Adapter_00000000-00.analog-stereo.monitor
-```
-
-Your source name may change if you switch from USB headset to HDMI or another audio output.
-
----
-
-## Daily startup
-
-From the app folder:
-
-```bash
-./run-all.sh both
-```
-
-The default mode is `both`, so this is also valid:
-
-```bash
-./run-all.sh
-```
-
-Normal startup does three things:
-
-1. Starts the **VU Meter bridge** on port **3748**
-2. Starts the **Spectrum Analyzer bridge** on port **3749**
-3. Opens the widget runner UI in **Electron**
-
-If Electron is not installed under `../node_modules`, the launcher falls back to browser app mode and opens Chromium at `http://127.0.0.1:8080/`.
-
----
-
-## Launcher modes
-
-| Command                      | Description                                                    |
-| ---------------------------- | -------------------------------------------------------------- |
-| `./run-all.sh both`          | Start VU bridge, Spectrum bridge, and Electron UI              |
-| `./run-all.sh vu`            | Start only the VU bridge and Electron UI                       |
-| `./run-all.sh spectrum`      | Start only the Spectrum bridge and Electron UI                 |
-| `./run-all.sh web`           | Start only the Electron UI                                     |
-| `./run-all.sh browser`       | Start the web UI in Chromium browser app mode                  |
-| `./run-all.sh demo`          | Start the dummy levels server and Electron UI                  |
-| `./run-all.sh help`          | Show launcher help                                             |
-
-> **Note:** Do not run demo mode at the same time as the real VU bridge. The dummy `levels-server.js` also uses port 3748.
-
----
-
-## Audio bridge changes made for Raspberry Pi OS
-
-The following changes were made so the VU Meter and Spectrum Analyzer work on this Raspberry Pi OS install:
-
-- Added `icue-widget-runner-raspi/audio-capture.js`
-- Converted the VU Meter bridge from Windows WASAPI/C# to FFmpeg + PulseAudio
-- Converted the Spectrum Analyzer bridge from Windows WASAPI/C# to FFmpeg + PulseAudio + `fft.js`
-- Removed the broken leftover C# block from the Spectrum Analyzer JavaScript bridge
-- Added `fft.js` to `package.json` and `package-lock.json`
-- Added **Linux** to the VU Meter and Spectrum Analyzer widget manifests
-- Added `run-all.sh` for Raspberry Pi / Linux startup
-- Removed the old Windows batch launcher from the Raspberry Pi repo
-
-### Audio source detection order
-
-The shared audio helper finds the correct source in this order:
-
-1. `ICUE_AUDIO_SOURCE` — if set
-2. `PULSE_SOURCE` — if set
-3. The **current default sink monitor** — usually `<default sink>.monitor`
-4. The **first available `.monitor`** source
-5. The **default source** as a fallback
-6. **FFmpeg's `default` source** as a last fallback
-
-This matters because the default Pulse/PipeWire source is often the **microphone**, but the widgets need the output monitor to visualize music, video, games, or other system playback.
-
----
-
-## Audio bridge endpoints
-
-### VU Meter
-
-| Detail           | Value                                                       |
-| ---------------- | ----------------------------------------------------------- |
-| Script           | `widgets/VU Meter Onkyo/audio-server.js`            |
-| JSON endpoint    | `http://127.0.0.1:3748/levels`                              |
-| Debug page       | `http://127.0.0.1:3748/debug`                               |
-
-Expected JSON:
-
-```json
-{ "L": 0.1234, "R": 0.1234 }
-```
-
-### Spectrum Analyzer
-
-| Detail           | Value                                                             |
-| ---------------- | ----------------------------------------------------------------- |
-| Script           | `widgets/SpectrumAnalyzer/spectrum-server 2.js`         |
-| JSON endpoint    | `http://127.0.0.1:3749/fft`                                      |
-| Debug page       | `http://127.0.0.1:3749/debug`                                     |
-
-Expected JSON:
-
-```json
-{ "bins": [0, 0, ...], "peak": 0, "bins_count": 64 }
-```
-
-If music is not playing, zeros are normal. Play audio through the Raspberry Pi's selected output and refresh the debug page to confirm movement.
-
----
-
-## Selecting a different audio output
-
-If you change from USB audio to HDMI, Bluetooth, or another output, the bridge usually follows the new default sink automatically after restart.
-
-To see available sources:
-
-```bash
-pactl list short sources
-```
-
-Look for the source ending in `.monitor` for the output you want. Then force it:
+The audio bridges rely on a monitor source such as `.monitor` from the selected output device. If needed, force a source explicitly:
 
 ```bash
 ICUE_AUDIO_SOURCE=alsa_output.your_output.monitor ./run-all.sh both
 ```
 
-Example:
+Required pieces:
+
+- Node.js and npm run the web server, Electron launcher, and bridge scripts.
+- Electron opens the normal app window.
+- FFmpeg captures audio from PulseAudio compatibility on PipeWire.
+- `pactl` from `pulseaudio-utils` is used to find output monitor sources.
+- `fft.js` is used by the Spectrum Analyzer bridge.
+- Chromium is used when Electron is missing or cannot start.
+
+### Daily Startup
+
+From the cloned repository root (the directory containing `package.json` and
+`run-all.sh`):
 
 ```bash
-ICUE_AUDIO_SOURCE=alsa_output.platform-107c701400.hdmi.hdmi-stereo.monitor ./run-all.sh both
+./run-all.sh both
 ```
 
----
+With no argument, the launcher also defaults to `both`, so `./run-all.sh` is
+equivalent. Use `./run-all.sh help` to list the available modes.
 
-## Manual bridge testing
-
-### VU Meter
+NPM scripts:
 
 ```bash
-cd "widgets/VU Meter Onkyo"
+npm start     # Start Electron; Electron starts the local web server.
+npm run web   # Start only the local web server at http://127.0.0.1:8080/
+```
+
+The launcher supports:
+
+```text
+./run-all.sh both       Start VU bridge, Spectrum bridge, and Electron UI.
+./run-all.sh vu         Start only the VU bridge and Electron UI.
+./run-all.sh spectrum   Start only the Spectrum bridge and Electron UI.
+./run-all.sh web        Start only the Electron UI.
+./run-all.sh browser    Start the web UI in Chromium browser app mode.
+./run-all.sh demo       Start the dummy VU levels server and Electron UI.
+./run-all.sh help       Show launcher help.
+```
+
+### Manual Bridge Testing
+
+If you want to test the bridges directly:
+
+```bash
+cd widgets/VU\ Meter\ Onkyo\ -\ Manny
 node audio-server.js
 ```
 
@@ -217,82 +131,166 @@ In another terminal:
 curl http://127.0.0.1:3748/levels
 ```
 
-### Spectrum Analyzer
+For the spectrum bridge:
 
 ```bash
-cd "widgets/SpectrumAnalyzer"
+cd "widgets/SpectrumAnalyzer-v1.0.1 1"
 node "spectrum-server 2.js"
 ```
-
-In another terminal:
 
 ```bash
 curl http://127.0.0.1:3749/fft
 ```
 
-Use **Ctrl+C** to stop a manually started bridge.
+## What It Does
 
----
+- Runs a local widget web app at `http://127.0.0.1:8080/`.
+- Scans `widgets/` for widget folders containing
+  `index.html` and optional `manifest.json`.
+- Shows discovered widgets in a sidebar with manifest metadata, preview icons,
+  runtime status, and a live iframe preview.
+- Supports temporary drag-and-drop widget folders and folder selection from the
+  UI.
+- Injects iCUE-style globals and a Sensors data provider shim so widgets can run
+  outside the full iCUE desktop runtime.
+- Starts in Electron by default, with a Chromium/browser app-mode fallback.
+- Provides Raspberry Pi audio bridges for live VU meter and spectrum widgets
+  using FFmpeg plus PipeWire/PulseAudio monitor sources.
 
-## RustDesk note
+## Main Components
 
-RustDesk is optional, but useful for managing the Raspberry Pi from Windows. If the Windows RustDesk client shows the wrong Raspberry Pi monitor, enable the monitor toolbar in RustDesk:
-
+```text
+Raspi_iCue_Widget_Runner_Engine/
+  main.js                  Electron main process. Starts the local web server.
+  preload.js               Secure Electron window-control bridge.
+  index.html               Runner UI shell.
+  runner-v2.js             Widget scanning, iframe loading, shim injection, UI.
+  web-server.js            Static server plus /api/widgets discovery endpoint.
+  app-config.js            Small UI config, including window-control visibility.
+  audio-capture.js         Shared FFmpeg/PulseAudio capture helper.
+  levels-server.js         Demo VU level server on port 3748.
+  run-all.sh               Raspberry Pi launcher for UI and audio bridges.
+  scripts/start-electron.js
+  widgets/
 ```
-Settings → Display → Other default options → Show monitors toolbar
+
+## Bundled Widgets
+
+| Widget            | Functionality                                                                          | Runtime notes                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| VU Stereo Meter   | Analog stereo VU meters with multiple amplifier styles.                                | Uses the local VU bridge at`http://127.0.0.1:3748/levels`; falls back to simulated/sensor motion if unavailable.        |
+| Spectrum Analyzer | Real-time 64-bin audio spectrum visualizer with themes.                                | Uses the spectrum bridge at`http://127.0.0.1:3749/fft`; runner exposes input gain, sensitivity, and smoothing controls. |
+| Robex Tourbillon  | Animated luxury watch face with date/month elements.                                   | Browser-hosted visual widget.                                                                                             |
+| Doodle pad        | Touch-style freeform drawing widget with brush, eraser, colors, and persistent canvas. | Browser-hosted interactive widget using local storage.                                                                    |
+| AQI               | Air quality display.                                                                   | Uses Open-Meteo APIs and needs network access for live data.                                                              |
+
+The runner lists every widget folder it can load. Original widget manifests may
+still show their source-platform metadata, but the local runner hosts them in the
+Raspberry Pi browser/Electron environment.
+
+
+## Audio Capture
+
+The Raspberry Pi audio path uses `audio-capture.js` to select a PulseAudio source
+and stream raw stereo PCM from FFmpeg. The source selection order is:
+
+1. `ICUE_AUDIO_SOURCE`, if set.
+2. `PULSE_SOURCE`, if set.
+3. The current default sink monitor, usually `<default sink>.monitor`.
+4. The first available `.monitor` source.
+5. The default source.
+6. FFmpeg's `default` source.
+
+To force a specific monitor source:
+
+```bash
+ICUE_AUDIO_SOURCE=alsa_output.your_output.monitor ./run-all.sh both
 ```
 
-Then reconnect and use the monitor buttons in the RustDesk session toolbar. If RustDesk still chooses the wrong display, set the desired Raspberry Pi display as **primary** in the Raspberry Pi screen/display settings, or temporarily disable the unwanted display, then reconnect.
+Useful checks:
 
----
+```bash
+pactl info
+pactl list short sources
+ffmpeg -hide_banner -devices
+```
+
+The bridges expose these local endpoints:
+
+```text
+VU Meter:
+  http://127.0.0.1:3748/levels
+  http://127.0.0.1:3748/debug
+
+Spectrum Analyzer:
+  http://127.0.0.1:3749/fft
+  http://127.0.0.1:3749/debug
+```
+
+`levels-server.js` is a demo server that also uses port `3748`, so do not run it
+at the same time as the real VU bridge.
+
+## Widget Loading
+
+`web-server.js` serves static files and exposes `GET /api/widgets`. That API
+returns every directory under `widgets/` with an `index.html`, plus manifest data
+and icon paths when available.
+
+`runner-v2.js` then:
+
+- Normalizes widget manifest fields.
+- Builds an iframe shell for each widget.
+- Injects iCUE compatibility globals before the widget code runs.
+- Adds default properties for bundled widgets.
+- Persists runner-side widget settings in browser local storage.
+- Tracks bridge reachability for the VU and Spectrum widgets.
+
+Dropped widget folders are loaded only for the current browser session. To make a
+widget permanent, add its folder under `widgets/`.
+
+## Configuration
+
+`app-config.js` currently exposes:
+
+```js
+window.ICUE_RUNNER_CONFIG = {
+  showWindowControls: true
+};
+```
+
+Set `showWindowControls` to `false` to hide the custom minimize, maximize, and
+close buttons in the frameless Electron window.
 
 ## Troubleshooting
 
-### No audio movement, but the widget UI opens
+- If `./run-all.sh` reports `cannot execute: required file not found`, check the
+  script format:
 
-- Confirm the bridge debug pages open:
-  - `http://127.0.0.1:3748/debug`
-  - `http://127.0.0.1:3749/debug`
-- Play audio through the Raspberry Pi's selected output
-- Run `pactl list short sources` and confirm a `.monitor` source exists
-- Restart the launcher after changing audio outputs
-- Force a source with `ICUE_AUDIO_SOURCE` if auto-detection picked the wrong one
+  ```bash
+  file run-all.sh
+  head -n 1 run-all.sh
+  ```
 
-### FFmpeg cannot capture pulse
+  The first line must be `#!/bin/bash`, and `file` must not report `CRLF line
+  terminators`. If an older checkout has CRLF endings, repair it and retry:
 
-- Confirm FFmpeg lists the `pulse` device: `ffmpeg -hide_banner -devices`
-- Confirm PipeWire/PulseAudio compatibility is running: `pactl info`
-- Reboot after installing `pipewire-pulse` or changing audio services
+  ```bash
+  sed -i 's/\r$//' run-all.sh
+  chmod +x run-all.sh
+  npm install
+  ./run-all.sh both
+  ```
 
-### Electron does not open
+- Run the launcher from the repository root. Confirm the correct directory with
+  `test -f package.json && test -f run-all.sh && echo "repository root OK"`.
+- If the UI opens but audio widgets do not move, open the `/debug` bridge pages
+  and confirm audio is playing through the Raspberry Pi's selected output.
+- If no `.monitor` source is listed, confirm PipeWire/PulseAudio compatibility
+  is running with `pactl info`.
+- If Electron does not open, run `npm install` from the repository root, or use
+  `./run-all.sh browser`.
+- If a port is already in use, stop duplicate Node processes or restart the Pi.
+  The main ports are `8080`, `3748`, and `3749`.
 
-- Run `npm install` from the repo root
-- Confirm `node_modules/electron/dist/electron` exists
-- Use browser mode as a fallback: `./run-all.sh browser`
-
-### Port already in use
-
-| Port | Service             |
-| ---- | ------------------- |
-| 3748 | VU Meter / demo     |
-| 3749 | Spectrum Analyzer   |
-
-- Stop duplicate `node` processes or reboot the Raspberry Pi
-
----
-
-## Packaging note
-
-This repo now keeps only the Raspberry Pi runner. The old Windows runner folders and Windows PowerShell packaging flow were removed from this repo to avoid mixing OS-specific builds.
-
----
-
-## Notes
-
-- No Python install is required
-- No Windows C# compiler or .NET Framework is required on Raspberry Pi OS
-- The Node web server auto-detects widgets using `/api/widgets`
-- The Electron app starts the web server itself when launched by `run-all.sh`
-- Set `showWindowControls` in `app-config.js` to show or hide the Electron window buttons
-- No `widgets/index.json` file is needed
-- Drag-and-drop widget folders are temporary for the current browser session
+The sections above include the Raspberry Pi setup, manual bridge testing, audio
+source selection, and endpoint notes.

@@ -1,13 +1,56 @@
-# macOS
-.DS_Store
-*.swp
-*.swo
-*~
+# If files were already tracked (VERY IMPORTANT)
+# You must remove them from Git tracking:
+# git rm -r --cached _Sample_Widgets_From_iCue
+# git rm -r --cached *.zip
+# git rm -r --cached
+# git status
+#
+# 👉 This:
+# Removes them from Git
+# Keeps them on your disk
 
-# Node
+# If you want to remove the .git folder (VERY DANGEROUS)
+# This will remove the Git repository and all its history. Use with caution!
+# Remove-Item -Recurse -Force .git
+
+# If you want to check if the .git folder exists
+# Test-Path .git
+
+# If you want to check if the  .gitignore file exists
+# Test-Path .gitignore
+
+
+# Ignore sample folder
+_Sample_Widgets_From_iCue/
+
+# Ignore self-contained package folder
+icue-widget-runner-v6-self-contained-package/
+
+# Ignore archives
+*.zip
+*.icuewidget
+
+# Ignore media files
+*.mp4
+*.avi
+
+# Python
+__pycache__/
+*.pyc
+
+# Node / Electron dependencies
 node_modules/
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# OS-specific
-*.exe
-*.dll
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Ignore Excel files
+*.xlsx
+*.csv
+
+# Ignore converted .md to .docx files
+*.docx
