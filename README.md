@@ -24,13 +24,14 @@ The runner is also useful for prototyping. Designers and developers can place a 
 
 ## Disclaimer and License
 
-This project is an experimental utility developed for internal testing, evaluation, and educational purposes. It is not an official Corsair product and is not affiliated with, endorsed by, or supported by Corsair.
-
-This software is provided as-is, without warranty or support. Use is at your own risk. The authors and copyright holders disclaim all responsibility for any damages, losses, or issues arising from the use of this software.
-
-This project is released under a non-commercial license. You may use, copy, modify, and redistribute it for personal, educational, research, or internal testing purposes only. Commercial use is expressly prohibited without prior written permission from the copyright holder.
-
-See the [LICENSE](LICENSE) file for the full text.
+This is experimental software, not a supported CORSAIR product. Review the
+[DISCLAIMER NOTICE](DISCLAIMER%20NOTICE) and [LICENSE](LICENSE) before using,
+modifying, or redistributing it. The project uses the standard MIT License,
+which permits both commercial and non-commercial use, modification,
+distribution, sublicensing, and sale as long as its copyright and permission
+notices are retained. The license applies to the software, not to CORSAIR or
+iCUE trademarks or any claim of endorsement. The software is provided as-is,
+without warranty or support.
 
 ### Prerequisites
 

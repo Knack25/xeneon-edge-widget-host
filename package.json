@@ -1,5 +1,5 @@
 {
-  "name": "raspi_icue_widget_runner_engine",
+  "name": "icue_widget_runner_engine_raspberry_pi",
   "version": "1.0.0",
   "description": "Raspberry Pi OS iCUE widget runner engine.",
   "main": "main.js",
@@ -14,7 +14,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/jlcorsair/Raspi_iCue_Widget_Runner_Engine/issues"
