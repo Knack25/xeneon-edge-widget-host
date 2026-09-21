@@ -555,7 +555,7 @@ function setupWindowControls() {
   const controls = document.getElementById('windowControls');
   const api = window.icueWindow;
   const config = window.ICUE_RUNNER_CONFIG || {};
-  const shouldShow = !!api && config.showWindowControls !== false;
+  const shouldShow = !!api && !api.nativeControls && config.showWindowControls !== false;
 
   if (!controls) return;
 

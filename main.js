@@ -1,7 +1,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { createPresentation } = require('./presentation');
 
 const DEFAULT_RUNNER_DIR = __dirname;
 const runnerDir = path.resolve(process.env.ICUE_WIDGET_RUNNER_DIR || DEFAULT_RUNNER_DIR);
@@ -17,8 +18,9 @@ console.log(`Using runner directory: ${runnerDir}`);
 
 let mainWindow;
 let webServer;
-const APP_URL = `http://${HOST}:${PORT}/`;
-const HEALTH_URL = `${APP_URL}api/widgets`;
+let presentation;
+const APP_URL = `http://${HOST}:${PORT}/?widget=com.shocksim.robextourbillon`;
+const HEALTH_URL = `http://${HOST}:${PORT}/api/widgets`;
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -72,10 +74,7 @@ function startLocalWebServer() {
         webServer = startServer({
             onError(error) {
                 if (error.code === 'EADDRINUSE') {
-                    console.warn(`Port ${PORT} is already in use; loading the existing local server.`);
-                    webServer = null;
-                    settle(resolve)();
-                    return;
+                    console.error(`Port ${PORT} is already in use. Stop the other runner or service, then retry.`);
                 }
 
                 settle(reject)(error);
@@ -86,15 +85,12 @@ function startLocalWebServer() {
 }
 
 async function createWindow() {
-    await startLocalWebServer();
-    await waitForServer(HEALTH_URL);
-
     mainWindow = new BrowserWindow({
         width: 1100,
         height: 720,
         minWidth: 520,
         minHeight: 360,
-        frame: false, // Frameless window
+        frame: process.platform === 'darwin', // Native macOS drag, close and fullscreen controls
         resizable: true, // Allow resizing
         show: false,
         autoHideMenuBar: true,
@@ -106,21 +102,32 @@ async function createWindow() {
         }
     });
 
+    presentation = createPresentation(mainWindow, screen, process.platform);
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
+        if (presentation.state().automaticId !== null) presentation.enter();
     });
-
-    mainWindow.loadURL(APP_URL); // Load your web page
 
     mainWindow.on('closed', () => {
         mainWindow = null;
+        presentation = null;
     });
+
+    await mainWindow.loadURL(APP_URL);
 }
 
-app.whenReady().then(createWindow).catch(error => {
+function failStartup(error) {
     console.error(error);
-    app.quit();
-});
+    if (webServer) webServer.close();
+    app.exit(1);
+}
+
+app.whenReady().then(async () => {
+    // The server belongs to the application, not an individual macOS window.
+    await startLocalWebServer();
+    await waitForServer(HEALTH_URL);
+    await createWindow();
+}).catch(failStartup);
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -130,7 +137,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
     if (mainWindow === null) {
-        createWindow();
+        createWindow().catch(failStartup);
     }
 });
 
@@ -144,6 +151,16 @@ app.on('before-quit', () => {
 function getSenderWindow(event) {
     return BrowserWindow.fromWebContents(event.sender);
 }
+
+ipcMain.handle('presentation:control', (event, action, id) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Only the launcher can control presentation.');
+    }
+    if (action === 'state') return presentation.state();
+    if (action === 'enter') return presentation.enter(id);
+    if (action === 'exit') return presentation.exit();
+    throw new Error('Unknown presentation action');
+});
 
 ipcMain.on('window:minimize', event => {
     const win = getSenderWindow(event);

@@ -1,3 +1,29 @@
+# XENEON Edge Widget Host
+
+Experimental macOS adaptation of [Corsair Labs' Raspberry Pi widget runner](https://github.com/Corsair-Labs/iCUE-widget-runner-RaspberryPi).
+Runs existing iCUE-style widgets in Electron, with automatic Edge display targeting,
+a manual display picker, and widget-only fullscreen with keyboard and touch exit.
+
+**[Mac setup and verification guide](README-MACOS.md)** — start here.
+
+```sh
+git clone https://github.com/Knack25/xeneon-edge-widget-host.git
+cd xeneon-edge-widget-host
+npm ci
+npm start
+```
+
+Use native ARM64 Node.js on Apple Silicon. Run `npm test` for regression tests and
+`npm run test:smoke` for a real Electron check. The original runtime, animated clock,
+accurate touch and close/reopen were verified by the user on a Mac. New fullscreen
+and targeting behavior has automated/Windows validation; Mac hardware checks remain.
+
+Upstream MIT license, disclaimer, widget credits and Git history are retained.
+This is not an official or supported Corsair product. Known dependency advisories
+and prototype limitations are documented in the Mac guide.
+
+## Original Raspberry Pi documentation
+
 # Raspi iCUE Widget Runner Engine
 
 Raspberry Pi OS runner for browser-style CORSAIR iCUE widgets. The app hosts

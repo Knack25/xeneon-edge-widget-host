@@ -22,6 +22,13 @@
     .window-btn.close:hover { background:#b3261e; }
     .viewer-wrap { position:relative; min-width:0; min-height:0; }
     #viewer { width:100%; height:100%; border:0; display:block; background:#0f0f0f; }
+    body.presenting .layout { grid-template-columns:1fr; }
+    body.presenting .sidebar, body.presenting .toolbar { display:none; }
+    body.presenting .main { grid-template-rows:1fr; }
+    #exitPresentation { display:none; position:fixed; top:12px; right:12px; z-index:10; min-height:44px; opacity:.7; }
+    body.presenting #exitPresentation { display:block; }
+    #exitPresentation:hover, #exitPresentation:focus { opacity:1; }
+    #displayPicker { width:100%; margin:8px 0; min-height:44px; }
     h1 { font-size:20px; margin:0 0 8px; }
     .muted { color:#aaa; font-size:12px; }
     .dropzone { border:2px dashed #3a3a3a; border-radius:12px; padding:12px; margin:12px 0; text-align:center; }
@@ -53,6 +60,12 @@
           <h1>iCUE Widget Runner</h1>
           <div class="muted">Generic browser host for web-style iCUE widgets</div>
         </div>
+        <div id="presentationControls" hidden>
+          <label for="displayPicker">Widget display</label>
+          <select id="displayPicker" class="btn"></select>
+          <button id="presentBtn" class="btn">Show widget fullscreen</button>
+          <p id="displayStatus" class="muted" role="status"></p>
+        </div>
         <div>
           <button class="btn" id="rescanBtn">Rescan widgets</button>
           <input id="folderInput" type="file" webkitdirectory directory multiple style="display:none">
@@ -82,6 +95,8 @@
       </div>
     </section>
   </div>
+  <button id="exitPresentation" class="btn" type="button">Exit fullscreen</button>
+  <script src="presentation-ui.js"></script>
   <script src="app-config.js"></script>
   <script src="runner-v2.js"></script>
 </body>

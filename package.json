@@ -1,25 +1,26 @@
 {
-  "name": "icue_widget_runner_engine_raspberry_pi",
+  "name": "xeneon-edge-widget-host",
   "version": "1.0.0",
-  "description": "Raspberry Pi OS iCUE widget runner engine.",
+  "description": "Experimental macOS iCUE-style widget host adapted from the Corsair Labs Raspberry Pi runner.",
   "main": "main.js",
   "scripts": {
     "start": "node scripts/start-electron.js .",
     "web": "node web-server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/main.test.js && node tests/presentation.test.js",
+    "test:smoke": "node scripts/run-smoke.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jlcorsair/Raspi_iCue_Widget_Runner_Engine.git"
+    "url": "git+https://github.com/Knack25/xeneon-edge-widget-host.git"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/jlcorsair/Raspi_iCue_Widget_Runner_Engine/issues"
+    "url": "https://github.com/Knack25/xeneon-edge-widget-host/issues"
   },
-  "homepage": "https://github.com/jlcorsair/Raspi_iCue_Widget_Runner_Engine#readme",
+  "homepage": "https://github.com/Knack25/xeneon-edge-widget-host#readme",
   "devDependencies": {
     "electron": "^41.5.0"
   },
