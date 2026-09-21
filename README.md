@@ -6,6 +6,9 @@ a manual display picker, and widget-only fullscreen with keyboard and touch exit
 
 **[Mac setup and verification guide](README-MACOS.md)** — start here.
 
+**Continuing development in a new chat? Read [HANDOFF.md](HANDOFF.md)** for
+current status, confirmed results, and the next Apple Silicon hardware checks.
+
 ```sh
 git clone https://github.com/Knack25/xeneon-edge-widget-host.git
 cd xeneon-edge-widget-host
