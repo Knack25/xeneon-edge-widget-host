@@ -29,13 +29,32 @@ function createPresentation(win, screen, platform) {
     if (platform === 'darwin') win.setSimpleFullScreen(value);
     else win.setFullScreen(value);
   }
-  function enter(id) {
+  function leaveNativeFullScreen() {
+    return new Promise((resolve, reject) => {
+      let timeout;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        win.removeListener('leave-full-screen', onLeave);
+      };
+      const onLeave = () => {
+        cleanup();
+        resolve();
+      };
+      win.once('leave-full-screen', onLeave);
+      timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('macOS did not finish exiting native fullscreen.'));
+      }, 5000);
+      win.setFullScreen(false);
+    });
+  }
+  async function enter(id) {
     const displays = screen.getAllDisplays();
     const target = id == null ? selectEdgeDisplay(displays) : displays.find(display => display.id === id);
     if (!target) throw new Error('Choose a connected display; no unique Edge was detected.');
     if (active) return state();
     if (platform === 'darwin' && win.isFullScreen()) {
-      throw new Error('Exit macOS fullscreen using the green window control first, then choose Show widget fullscreen.');
+      await leaveNativeFullScreen();
     }
     previousBounds = win.getBounds();
     targetId = target.id;

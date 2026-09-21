@@ -90,7 +90,8 @@ async function createWindow() {
         height: 720,
         minWidth: 520,
         minHeight: 360,
-        frame: process.platform === 'darwin', // Native macOS drag, close and fullscreen controls
+        frame: process.platform === 'darwin', // Native macOS drag, close, minimize and zoom controls
+        fullscreenable: process.platform !== 'darwin', // Presentation owns fullscreen on macOS; keep the green button out of Spaces.
         resizable: true, // Allow resizing
         show: false,
         autoHideMenuBar: true,

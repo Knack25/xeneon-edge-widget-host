@@ -77,6 +77,7 @@ test('macOS starts the offline clock with native window controls', async () => {
   const { windows } = await boot();
   assert.equal(new URL(windows[0].url).searchParams.get('widget'), 'com.shocksim.robextourbillon');
   assert.equal(windows[0].options.frame, true);
+  assert.equal(windows[0].options.fullscreenable, false, 'green button must not create a native fullscreen Space');
   assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
   assert.equal(windows[0].options.webPreferences.contextIsolation, true);
 });
