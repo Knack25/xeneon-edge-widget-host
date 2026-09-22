@@ -78,6 +78,7 @@ test('macOS starts the offline clock with native window controls', async () => {
   assert.equal(new URL(windows[0].url).searchParams.get('widget'), 'com.shocksim.robextourbillon');
   assert.equal(windows[0].options.frame, true);
   assert.equal(windows[0].options.fullscreenable, false, 'green button must not create a native fullscreen Space');
+  assert.equal(windows[0].options.acceptFirstMouse, true, 'first touch must activate the control, not only the window');
   assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
   assert.equal(windows[0].options.webPreferences.contextIsolation, true);
 });
@@ -91,6 +92,7 @@ test('occupied port fails instead of loading an unrelated service', async () => 
 test('Windows retains frameless controls and quits on last window close', async () => {
   const { app, windows } = await boot({ platform: 'win32' });
   assert.equal(windows[0].options.frame, false);
+  assert.equal(Object.hasOwn(windows[0].options, 'acceptFirstMouse'), false);
   windows[0].close();
   assert.equal(app.quitCalled, true);
 });
