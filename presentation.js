@@ -26,8 +26,13 @@ function createPresentation(win, screen, platform) {
   }
   function fullscreen(value) {
     // Simple fullscreen stays on the selected Mac display without creating a Space.
-    if (platform === 'darwin') win.setSimpleFullScreen(value);
-    else win.setFullScreen(value);
+    if (platform === 'darwin') {
+      win.setSimpleFullScreen(value);
+      if (value) win.setAlwaysOnTop(true, 'pop-up-menu');
+      else win.setAlwaysOnTop(false);
+    } else {
+      win.setFullScreen(value);
+    }
   }
   function leaveNativeFullScreen() {
     return new Promise((resolve, reject) => {

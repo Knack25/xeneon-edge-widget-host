@@ -22,6 +22,8 @@ function fixture() {
   win.getBounds = () => ({ ...win.bounds });
   win.setBounds = bounds => { win.bounds = { ...bounds }; };
   win.setSimpleFullScreen = value => { win.fullscreen = value; };
+  win.alwaysOnTopCalls = [];
+  win.setAlwaysOnTop = (value, level) => { win.alwaysOnTopCalls.push({ value, level }); };
   win.isFullScreen = () => false;
   win.webContents = new EventEmitter();
   win.webContents.send = () => {};
@@ -40,6 +42,16 @@ test('presentation uses logical target bounds and restores launcher on Escape', 
   assert.equal(controller.state().active, false);
   assert.equal(win.fullscreen, false);
   assert.deepEqual(win.bounds, { x: 30, y: 40, width: 1100, height: 720 });
+});
+test('macOS presentation covers the Dock only while active', async () => {
+  const { controller, win } = fixture();
+  await controller.enter();
+  assert.deepEqual(win.alwaysOnTopCalls, [{ value: true, level: 'pop-up-menu' }]);
+  controller.exit();
+  assert.deepEqual(win.alwaysOnTopCalls, [
+    { value: true, level: 'pop-up-menu' },
+    { value: false, level: undefined }
+  ]);
 });
 test('manual targeting validates IDs and repeated enter preserves original bounds', async () => {
   const { controller, win } = fixture();
