@@ -100,6 +100,32 @@ test('asynchronous settings errors are contained and obsolete settings failures 
   await assert.rejects(f.runtime.updateSettings({ revision: 4, settings: {} }), /async update failed/);
   assert.deepEqual(f.reports.at(-1), { revision: 4, ok: false, message: 'async update failed' });
 });
+test('later settings recover a live widget after a transient callback throw or rejection', async () => {
+  for (const fail of [() => { throw Error('transient update'); }, () => Promise.reject(Error('transient update'))]) {
+    const f = fixture(); await f.load(); const live = f.live();
+    live.contentWindow.icueEvents.onDataUpdated = fail;
+    await assert.rejects(f.runtime.updateSettings({ revision: 2, settings: { transparency: 22 } }), /transient update/);
+    let updatedValue;
+    live.contentWindow.icueEvents.onDataUpdated = () => { updatedValue = live.contentWindow.transparency; return Promise.resolve(); };
+    await f.runtime.updateSettings({ revision: 3, settings: { transparency: 33 } });
+    assert.equal(f.live(), live); assert.equal(f.frames.length, 1); assert.equal(updatedValue, 33);
+    assert.deepEqual(f.reports.at(-1), { revision: 3, ok: true });
+    await f.runtime.updateSettings({ revision: 4, settings: { transparency: 44 } });
+    assert.equal(updatedValue, 44); assert.deepEqual(f.reports.at(-1), { revision: 4, ok: true });
+    f.runtime.destroy();
+  }
+});
+test('settings after failed replacement still withhold requested properties from retained content', async () => {
+  let fail = false; const f = fixture({ fetchText: async () => { if (fail) throw Error('replacement failed'); return '<head></head>'; } });
+  await f.load(); const previous = f.live(); fail = true;
+  await assert.rejects(f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }), /replacement failed/);
+  await f.runtime.updateSettings({ revision: 3, settings: { transparency: 33 } });
+  assert.equal(f.live(), previous); assert.equal(previous.contentWindow.transparency, 80);
+  assert.deepEqual(f.reports.at(-1), { revision: 3, ok: false, message: 'replacement failed' });
+  const missing = fixture(); await assert.rejects(missing.runtime.load({ widget: null, revision: 1 }), /missing/);
+  assert.deepEqual(await missing.runtime.updateSettings({ revision: 2, settings: {} }), { failed: true });
+  assert.deepEqual(missing.reports.at(-1), { revision: 2, ok: false, message: 'Selected widget is missing from the catalog.' });
+});
 test('old failures and destroyed fetches dispose without reporting obsolete status', async () => {
   const slow = deferred(); const f = fixture({ fetchText: url => url === clock.entryUrl ? slow.promise : Promise.resolve('<head></head>') });
   const older = f.runtime.load({ widget: clock, revision: 1, settings: {} }); await f.load(doodle, 2);

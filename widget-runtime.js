@@ -144,8 +144,10 @@
       if (destroyed || !current || revision < current.revision) return stale;
       const operation = current; operation.revision = revision; operation.settings = { ...settings };
       if (operation.status === 'loading') return { pending: true };
-      if (operation.status === 'failed') { await send(operation, false, operation.error); return { failed: true }; }
-      try { if (await applySettings(operation) === stale) return stale; await send(operation, true); return { stale: false }; }
+      // A failed replacement must not send its settings into retained content.
+      // The owned live frame can retry a transient settings callback failure.
+      if (operation.status === 'failed' && (!live || operation.frame !== live)) { await send(operation, false, operation.error); return { failed: true }; }
+      try { if (await applySettings(operation) === stale) return stale; operation.status = 'loaded'; operation.error = null; await send(operation, true); return { stale: false }; }
       catch (error) { operation.status = 'failed'; operation.error = error.message || String(error); await send(operation, false, operation.error); throw error; }
     }
     function destroy() {
