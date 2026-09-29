@@ -43,19 +43,21 @@ and prototype limitations are documented in the Mac guide.
 The Linux setup and audio bridge instructions below retain upstream context.
 The shared Electron UI now uses controller/Edge roles described above; former
 launcher live previews and temporary dropped-folder imports have been retired.
+Chromium/browser mode remains in the upstream launch script as historical context;
+it cannot operate the current controller, which requires Electron's native bridge.
 
 # Raspi iCUE Widget Runner Engine
 
 Raspberry Pi OS runner for browser-style CORSAIR iCUE widgets. The app hosts
 widgets from the local `widgets/` folder, injects a small iCUE compatibility
-shim, and displays the selected widget in an Electron window or Chromium app
-mode.
+shim, and displays the selected widget in Electron. The original Chromium app
+mode does not support the current controller.
 
 The application is self-contained in the repository root.
 
 ## What the App Does
 
-Raspi iCUE Widget Runner Engine brings browser-style CORSAIR iCUE widgets to Raspberry Pi OS. It discovers compatible widgets stored on the device, presents them in a simple launcher, and runs the selected experience in an Electron window or Chromium app mode. An iCUE compatibility layer helps widgets operate outside the full desktop iCUE runtime, while optional local audio bridges enable experiences such as live VU meters and spectrum analyzers.
+Raspi iCUE Widget Runner Engine brings browser-style CORSAIR iCUE widgets to Raspberry Pi OS. The current Electron app discovers compatible widgets, presents them in a static controller, and runs the selected experience in the separate Edge window. An iCUE compatibility layer helps widgets operate outside the full desktop iCUE runtime, while optional local audio bridges enable experiences such as live VU meters and spectrum analyzers.
 
 ## Use Case Scenario
 
@@ -158,7 +160,7 @@ The launcher supports:
 ./run-all.sh vu         Start only the VU bridge and Electron UI.
 ./run-all.sh spectrum   Start only the Spectrum bridge and Electron UI.
 ./run-all.sh web        Start only the Electron UI.
-./run-all.sh browser    Start the web UI in Chromium browser app mode.
+./run-all.sh browser    Historical Chromium mode; current controller unavailable.
 ./run-all.sh demo       Start the dummy VU levels server and Electron UI.
 ./run-all.sh help       Show launcher help.
 ```
@@ -200,7 +202,8 @@ curl http://127.0.0.1:3749/fft
   explicit confirmation for same-ID replacements.
 - Injects iCUE-style globals and a Sensors data provider shim so widgets can run
   outside the full iCUE desktop runtime.
-- Starts in Electron by default, with a Chromium/browser app-mode fallback.
+- Runs in Electron; the retained upstream Chromium/browser mode cannot provide
+  the native bridge required by the current controller.
 - Provides Raspberry Pi audio bridges for live VU meter and spectrum widgets
   using FFmpeg plus PipeWire/PulseAudio monitor sources.
 
@@ -284,9 +287,11 @@ at the same time as the real VU bridge.
 
 ## Widget Loading
 
-`web-server.js` serves static files and exposes `GET /api/widgets`. That API
-returns every directory under `widgets/` with an `index.html`, plus manifest data
-and icon paths when available.
+`web-server.js` serves static files and exposes `GET /api/widgets`. In the Electron
+app, that API returns the combined bundled and managed catalog, with manifest
+data and icon paths when available. Confirmed same-ID imports take precedence as
+managed overrides. Standalone `npm run web` retains bundled-only discovery and
+cannot operate the current controller without Electron's native bridge.
 
 `widget-runtime.js`, consumed only by Edge, then:
 
@@ -344,8 +349,9 @@ controller controls. The Edge has no app window-control overlay.
   and confirm audio is playing through the Raspberry Pi's selected output.
 - If no `.monitor` source is listed, confirm PipeWire/PulseAudio compatibility
   is running with `pactl info`.
-- If Electron does not open, run `npm install` from the repository root, or use
-  `./run-all.sh browser`.
+- If Electron does not open, run `npm install` from the repository root and
+  inspect the launch error. The retained `./run-all.sh browser` mode is historical
+  upstream behavior and does not replace the current Electron controller.
 - If a port is already in use, stop duplicate Node processes or restart the Pi.
   The main ports are `8080`, `3748`, and `3749`.
 

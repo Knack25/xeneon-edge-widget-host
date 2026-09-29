@@ -36,7 +36,9 @@ rather than a macOS runtime gate.
 Connect the Edge as an extended display before launch. The controller opens on
 the primary display, or restores safe saved bounds on a connected non-Edge
 display. The Edge restores the saved widget and settings when its target resolves.
-With no usable saved selection, the offline Robex clock is the default.
+The offline Robex clock is the default on first launch or when persisted selection
+data is missing/invalid. If a valid saved widget ID is absent from the catalog,
+the controller reports that it is unavailable; choose another widget explicitly.
 
 Choose a widget in the controller list, then use its Settings controls. The Edge
 keeps its native window and fullscreen placement during selection. If a widget
