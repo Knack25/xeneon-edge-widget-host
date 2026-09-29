@@ -27,7 +27,9 @@
       const message = result.message ? { message: result.message } : {};
       const payload = { pageId: entry.pageId, widgetId: entry.widgetId,
         generation: entry.generation, revision: result.revision, ok: result.ok, ...message };
-      return Promise.resolve().then(() => report(payload)).catch(() => {});
+      return Promise.resolve().then(() => report(payload)).then(() => {
+        if (result.ok && entries.get(entry.pageId) === entry) entry.lastReportedRevision = result.revision;
+      }).catch(() => {});
     }
 
     function makeEntry(page, widget, generation, revision) {
@@ -48,7 +50,14 @@
       entry.runtime = createRuntime({ container, report: result => {
         if (destroyed || entries.get(entry.pageId) !== entry) return;
         if (entry.loading && result.ok) return; // Success is reported only after visible promotion.
-        if (entry.loading && !result.ok) entry.failureReported = true;
+        if (!result.ok) {
+          entry.ready = false;
+          entry.failed = true;
+          if (entry.loading) entry.failureReported = true;
+        } else if (!entry.loading) {
+          entry.ready = true;
+          entry.failed = false;
+        }
         void send(entry, result);
       } });
       entries.set(page.id, entry);
@@ -142,6 +151,7 @@
           work.push(prepare(entry, widget, settings, snapshot.revision, token));
           continue;
         }
+        if (page.id === activePageId) entry.revision = snapshot.revision;
         const settingsKey = JSON.stringify(settings);
         if (page.id === activePageId && !entry.ready && !entry.loading && (!entry.failed || requestedChanged)) {
           entry.settingsKey = settingsKey;
@@ -158,6 +168,9 @@
       }
       const selected = entries.get(activePageId);
       if (selected?.ready && requestedChanged) await promote(selected, token, snapshot.revision, !activeSettingsChanged);
+      else if (selected?.ready && !activeSettingsChanged && selected.lastReportedRevision !== snapshot.revision) {
+        await send(selected, { revision: snapshot.revision, ok: true });
+      }
       await Promise.all(work);
     }
 

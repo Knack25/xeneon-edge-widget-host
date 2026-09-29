@@ -90,6 +90,37 @@ test('a failed active settings update cannot be followed by a false success repo
   assert.deepEqual(f.reports.filter(value => value.revision === 2), [{ pageId: 'A', widgetId: 'doodle', generation: 1, revision: 2, ok: false, message: 'settings failed' }]);
 });
 
+test('a failed settings update invalidates a cached runtime and retries before promotion', async () => {
+  const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
+  f.runtimes[0].updateSettings = input => {
+    f.runtimes[0].updates.push(input);
+    f.runtimes[0].reports({ revision: input.revision, ok: false, message: 'settings failed' });
+    return Promise.reject(Error('settings failed'));
+  };
+  await f.manager.receive(snapshot(2, 'A', ['A', 'B', 'C'], { settings: { A: { color: 'green' } } }));
+  const toB = f.manager.receive(snapshot(3, 'B'));
+  finish(f.runtimes[1]); await toB;
+  const backToA = f.manager.receive(snapshot(4, 'A', ['A', 'B', 'C'], { settings: { A: { color: 'green' } } }));
+  assert.equal(f.runtimes[0].loads.length, 2);
+  assert.equal(f.runtimes[0].container.getAttribute('aria-hidden'), 'true');
+  finish(f.runtimes[0]); await backToA;
+  assert.equal(f.runtimes[0].container.getAttribute('aria-hidden'), 'false');
+  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 4, ok: true });
+});
+
+test('same-page selection reports the cached runtime for the new request revision', async () => {
+  const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
+  await f.manager.receive(snapshot(2, 'A'));
+  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 2, ok: true });
+});
+
+test('same-page selection advances a pending load report to the latest request revision', async () => {
+  const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A'));
+  await f.manager.receive(snapshot(2, 'A'));
+  finish(f.runtimes[0]); await initial;
+  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 2, ok: true });
+});
+
 test('reimport of the presented page stages replacement inside its existing runtime', async () => {
   const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
   const container = f.runtimes[0].container;
@@ -108,7 +139,7 @@ test('a superseded active reimport cannot promote or start another load', async 
   const same = f.manager.receive(snapshot(4, 'A', ['A', 'B', 'C'], { generations: { A: 3 } }));
   assert.equal(f.runtimes[0].loads.length, 3);
   f.runtimes[0].loads[2].gate.resolve({ stale: false, ok: true }); await Promise.all([newer, same]);
-  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 3, revision: 3, ok: true });
+  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 3, revision: 4, ok: true });
 });
 
 test('deleting pending B disposes it once and prevents promotion', async () => {
