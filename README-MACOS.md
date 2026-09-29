@@ -11,10 +11,19 @@ the Robex clock animates, the Edge works as an extended display with accurate
 touch, and the window closes/reopens successfully. Exact Mac model, architecture
 and OS version were not recorded.
 
-**This update:** automatic Edge targeting and widget-only fullscreen are
-implemented. Automated checks and real Electron fullscreen/exit tests pass on
-Windows x64. The new targeting/fullscreen behavior still needs testing on the
-user's Mac and Edge; this development environment has neither attached.
+**Current Mac validation (2026-09-21):** automatic Edge targeting and
+widget-only fullscreen were exercised on an Apple M1 MacBook Pro running
+macOS 26.6.2 with native ARM64 Node 26.9.0. Nine regression tests and the real
+Electron smoke test pass, including animation, fullscreen layout, Escape,
+the on-screen exit action and close/reopen. Electron identified the attached
+Edge by name at 2560 × 720.
+
+A direct coordinate probe also found a macOS limitation on this fresh install:
+Edge taps moved the system pointer to matching positions on the 1440 × 900
+built-in display, and the Edge window received no pointer events. Application
+code cannot reroute input it never receives. Touch therefore requires a
+working macOS HID mapping/calibration solution and remains outside the verified
+host behavior.
 
 ## Run on Apple Silicon
 
@@ -95,21 +104,21 @@ Command-Q and fullscreen. The smoke test opens and then closes its own window.
    the primary display. Reconnect and use the picker/button to resume.
 
 macOS uses Electron's simple fullscreen mode to stay on the chosen display
-without opening a new Space. Use the launcher's fullscreen button for this mode;
-the native green button continues to control macOS's separate fullscreen mode.
-If already in that native mode, exit it before pressing Show widget fullscreen;
-the app displays a reminder rather than attempting a move macOS would ignore.
+without opening a new Space. Use the launcher's fullscreen button for this mode.
+Native green-button fullscreen is disabled for this window so it cannot create
+a competing Space. If macOS still reports a native fullscreen transition, Show
+widget fullscreen exits it, waits for completion and then enters presentation.
 Window placement uses Electron's logical bounds, including negative coordinates.
 The exit button intentionally remains over the widget so a touch-only user can
-get back. No display preference or last widget is saved; reopening starts with
-the Robex clock and redetects the Edge. Login launch remains deferred.
+get back when the operating system routes touch to the Edge. Escape and mouse
+input remain available when it does not. No display preference or last widget
+is saved; reopening starts with the Robex clock and redetects the Edge. Login
+launch remains deferred.
 
-Mac acceptance checks for this update: start with the Edge connected, confirm the
-clock is on that display with no sidebar, exit by touch and by Escape, choose
-Doodle pad and re-enter, unplug/reconnect, and close/reopen. Verify placement and
-touch coordinates after fullscreen changes. Existing Phase 1 touch accuracy was
-user-confirmed, but fullscreen touch behavior and multitouch are not yet verified.
-No HID driver, calibration or touch translation is added.
+Remaining Mac acceptance checks: choose Doodle pad and re-enter, then exercise
+unplug/reconnect on hardware. Touch and multitouch are not host acceptance gates
+until macOS routes the Edge HID coordinates to the Edge display. No HID driver,
+calibration or touch translation is included.
 
 ## Linux assumptions found
 

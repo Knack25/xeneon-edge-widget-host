@@ -56,9 +56,10 @@ app.whenReady().then(async () => {
   assert.equal(first.visible, true);
   assert.match(first.date, /^\d{1,2}$/);
   assert.equal(first.node, 'undefined');
-  await delay(1200);
-  const second = await win.webContents.executeJavaScript(snapshot);
-  assert.notEqual(second.rotation, first.rotation, 'clock hand must animate');
+  const second = await until(async () => {
+    const current = await win.webContents.executeJavaScript(snapshot);
+    return current.rotation !== first.rotation ? current : false;
+  }, 'clock hand animation');
   if (process.platform === 'darwin') {
     assert.equal(second.nativeControls, true);
     assert.equal(second.customControlsHidden, true);
@@ -97,6 +98,7 @@ app.whenReady().then(async () => {
   // Real Dock-style close/reopen is exercised when this is run on a Mac.
   if (process.platform === 'darwin') {
     win.close();
+    await until(() => BrowserWindow.getAllWindows().length === 0, 'Mac window close');
     app.emit('activate');
     app.emit('activate');
     const reopened = await until(() => BrowserWindow.getAllWindows()[0], 'Mac reopen');
