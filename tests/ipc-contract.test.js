@@ -19,7 +19,8 @@ function fixture() {
   const coordinator = {};
   for (const method of ['snapshot', 'getScene', 'selectWidget', 'updateSetting', 'selectDisplay',
     'setEdgeVisible', 'beginImport', 'confirmImport', 'cancelImport', 'mergeLegacySettings',
-    'rescanWidgets', 'reportLoadResult']) {
+    'rescanWidgets', 'reportLoadResult', 'createPage', 'renamePage', 'movePage', 'deletePage',
+    'selectPage', 'setNavigationPosition']) {
     coordinator[method] = (...args) => { calls.push([method, ...args]); return { method, args }; };
   }
   const dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: ['/chosen/widget'] }) };
@@ -33,7 +34,8 @@ test('controller IPC rejects Edge, subframe, stale, destroyed and absent senders
   const r = fixture();
   const channels = ['app:get-state', 'scene:select-widget', 'scene:update-setting', 'display:select',
     'edge:set-visible', 'widgets:import', 'widgets:confirm-import', 'widgets:cancel-import',
-    'settings:migrate-legacy', 'widgets:rescan'];
+    'settings:migrate-legacy', 'widgets:rescan', 'pages:create', 'pages:rename', 'pages:move',
+    'pages:delete', 'pages:select', 'pages:set-navigation-position'];
   for (const channel of channels) {
     const handler = r.handlers.get(channel);
     assert.equal(typeof handler, 'function', channel);
@@ -51,8 +53,15 @@ test('controller IPC rejects Edge, subframe, stale, destroyed and absent senders
 test('controller commands preserve arguments and coordinator validation failures', async () => {
   const r = fixture();
   const cases = [
-    ['app:get-state', 'snapshot', []], ['scene:select-widget', 'selectWidget', ['clock']],
-    ['scene:update-setting', 'updateSetting', ['gain', 0]], ['display:select', 'selectDisplay', [2]],
+    ['app:get-state', 'snapshot', []], ['scene:select-widget', 'selectWidget', [{ pageId: 'p1', widgetId: 'clock' }]],
+    ['scene:update-setting', 'updateSetting', [{ pageId: 'p1', widgetId: 'clock', name: 'gain', value: 0 }]],
+    ['pages:create', 'createPage', [{ name: 'Second' }]],
+    ['pages:rename', 'renamePage', [{ pageId: 'p1', name: 'First' }]],
+    ['pages:move', 'movePage', [{ pageId: 'p1', direction: 'up' }]],
+    ['pages:delete', 'deletePage', [{ pageId: 'p1' }]],
+    ['pages:select', 'selectPage', [{ pageId: 'p1' }]],
+    ['pages:set-navigation-position', 'setNavigationPosition', [{ position: 'top-left' }]],
+    ['display:select', 'selectDisplay', [2]],
     ['edge:set-visible', 'setEdgeVisible', [false]], ['widgets:confirm-import', 'confirmImport', ['one-use']],
     ['widgets:cancel-import', 'cancelImport', ['one-use']], ['settings:migrate-legacy', 'mergeLegacySettings', [{ clock: { gain: 2 } }]],
     ['widgets:rescan', 'rescanWidgets', []]
@@ -61,17 +70,19 @@ test('controller commands preserve arguments and coordinator validation failures
     assert.deepEqual(await r.handlers.get(channel)(r.controllerEvent, ...args), { method, args });
   }
   r.coordinator.updateSetting = () => { throw new Error('Invalid setting'); };
-  await assert.rejects(r.handlers.get('scene:update-setting')(r.controllerEvent, '__proto__', {}), /Invalid setting/);
+  await assert.rejects(r.handlers.get('scene:update-setting')(r.controllerEvent, { pageId: 'p1', widgetId: 'clock', name: '__proto__', value: {} }), /Invalid setting/);
 });
 
 test('Edge scene and reports require only the current Edge main frame', async () => {
   const r = fixture();
-  for (const channel of ['edge:get-scene', 'edge:load-result']) {
+  for (const channel of ['edge:get-scene', 'edge:load-result', 'edge:select-page']) {
     await assert.rejects(r.handlers.get(channel)(r.controllerEvent, { revision: 2, ok: true }), /Edge/i);
     await assert.rejects(r.handlers.get(channel)({ ...r.edgeEvent, senderFrame: {} }), /Edge/i);
   }
   const report = { revision: 2, ok: true, message: 'loaded' };
   assert.deepEqual(await r.handlers.get('edge:load-result')(r.edgeEvent, report), { method: 'reportLoadResult', args: [report] });
+  assert.deepEqual(await r.handlers.get('edge:select-page')(r.edgeEvent, { pageId: 'p2' }),
+    { method: 'selectPage', args: [{ pageId: 'p2' }] });
   r.coordinator.reportLoadResult = () => { throw new Error('Stale revision'); };
   await assert.rejects(r.handlers.get('edge:load-result')(r.edgeEvent, report), /Stale revision/);
 });
@@ -117,20 +128,26 @@ function preload(name, isMainFrame = true) {
   const ipcRenderer = new EventEmitter(); const invocations = [], sends = [];
   ipcRenderer.invoke = (...args) => { invocations.push(args); return Promise.resolve('result'); };
   ipcRenderer.send = (...args) => sends.push(args);
-  let globalName, bridge;
+  let globalName, bridge, navigationBridge;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', name), 'utf8'), {
     process: { platform: 'darwin', isMainFrame },
-    require: () => ({ ipcRenderer, contextBridge: { exposeInMainWorld(name, value) { globalName = name; bridge = value; } } })
+    require: () => ({ ipcRenderer, contextBridge: {
+      exposeInMainWorld(name, value) { globalName = name; bridge = value; },
+      exposeInIsolatedWorld(world, name, value) { assert.equal(world, 1001); assert.equal(name, 'icueNavigation'); navigationBridge = value; }
+    } })
   });
-  return { ipcRenderer, invocations, sends, globalName, bridge };
+  return { ipcRenderer, invocations, sends, globalName, bridge, navigationBridge };
 }
 
 test('controller preload exposes task methods, validates subscriptions and removes listeners', async () => {
   const r = preload('preload-controller.js');
   assert.equal(r.globalName, 'icueController'); assert.equal(r.bridge.nativeControls, true);
   assert.equal(r.bridge.ipcRenderer, undefined);
-  await r.bridge.updateSetting('gain', 3); await r.bridge.rescanWidgets(); r.bridge.close();
-  assert.deepEqual(r.invocations, [['scene:update-setting', 'gain', 3], ['widgets:rescan']]);
+  const edit = { pageId: 'p1', widgetId: 'clock', name: 'gain', value: 3 };
+  await r.bridge.updateSetting(edit); await r.bridge.rescanWidgets();
+  await r.bridge.createPage({ name: 'Second' }); await r.bridge.selectPage({ pageId: 'p2' }); r.bridge.close();
+  assert.deepEqual(r.invocations, [['scene:update-setting', edit], ['widgets:rescan'],
+    ['pages:create', { name: 'Second' }], ['pages:select', { pageId: 'p2' }]]);
   assert.deepEqual(r.sends, [['window:close']]);
   assert.throws(() => r.bridge.onState(null), /callback/i);
   let payload; const unsubscribe = r.bridge.onState(value => { payload = value; });
@@ -147,11 +164,25 @@ test('Edge preload has only its scene/report methods and removable subscriptions
   assert.deepEqual(r.invocations, [['edge:get-scene'], ['edge:load-result', { revision: 3, ok: false }]]);
   assert.throws(() => r.bridge.onScene('bad'), /callback/i);
   const unsubscribe = r.bridge.onScene(() => {}); unsubscribe();
-  assert.equal(r.ipcRenderer.listenerCount('edge:scene'), 0);
+  assert.equal(r.ipcRenderer.listenerCount('edge:scene'), 1); // Private navigation listener remains.
+});
+
+test('isolated navigation validates page IDs against the latest main-process scene', async () => {
+  const r = preload('preload-edge.js');
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 2, scene: { activePageId: 'a', pages: [{ id: 'a' }, { id: 'b' }] } });
+  await r.navigationBridge.selectPage({ pageId: 'b' });
+  assert.equal(r.invocations.at(-1)[0], 'edge:select-page');
+  assert.equal(r.invocations.at(-1)[1].pageId, 'b');
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 3, scene: { activePageId: 'a', pages: [{ id: 'a' }] } });
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 2, scene: { activePageId: 'b', pages: [{ id: 'b' }] } });
+  await assert.rejects(r.navigationBridge.selectPage({ pageId: 'b' }), /Unknown page/);
+  await assert.rejects(r.navigationBridge.selectPage({ pageId: 'unknown' }), /Unknown page/);
+  assert.equal(r.invocations.length, 1);
 });
 
 test('preloads expose no host capability in widget subframes', () => {
   for (const file of ['preload-controller.js', 'preload-edge.js']) {
     assert.equal(preload(file, false).bridge, undefined);
+    assert.equal(preload(file, false).navigationBridge, undefined);
   }
 });

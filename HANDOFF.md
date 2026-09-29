@@ -1,78 +1,87 @@
-# Two-window Mac handoff
+# Multi-page Mac handoff
 
-Updated 2026-09-29. Tasks 1–8 implementation baseline: `265ddd3`.
-Implementation lives in isolated `feat/two-window-implementation`; the original
-`feat/two-window-controller` retains the approved spec and plan. No merge or push
-is authorized by this checkpoint.
+Updated 2026-09-29. Working branch: `feat/multi-page-navigation`.
+The approved design is in [multi-page-design.md](docs/superpowers/specs/2026-09-29-multi-page-design.md).
+This branch has not been merged or pushed.
 
-The static controller opens on the primary Mac display; Edge owns the sole live
-widget. Selection/settings preserve Edge fullscreen. Controller close keeps Edge
-and server running; Dock activation recreates/focuses the controller. Hide/Show
-destroys/recreates only Edge, preserving its scene. Command-Q closes both windows,
-flushes state and closes `127.0.0.1:8080`. Edge has no app overlay or Escape exit.
-See [README-MACOS.md](README-MACOS.md) for operation, durable imports, display
-fingerprints and actual userData path semantics.
+The controller creates, names, reorders, selects and deletes pages. Each page
+contains one full-size widget and its own host-managed settings. Numbered Edge
+buttons select pages in one of six saved positions. Page IDs survive rename and
+reorder. The Edge loads pages on first visit and retains visited frames until
+deletion, replacement or Edge destruction. A failed first visit keeps the
+previous page visible and reports the requested page in the controller.
+Pending preparation follows the latest request when revisiting a still-loading
+page. Edge selection runs in isolated world 1001 with trusted native button input;
+the main-world bridge has no page-selection method. Legacy widget DOM/storage
+access remains unchanged; this is not a hostile-widget sandbox.
 
-Phase one has one page/one full-page widget. Page creation and Edge-initiated
-navigation come next, with gesture/button testing against scrolling and drawing.
-Simultaneous multi-widget layout/editing follows on a later branch.
+Version 2 state stores page order, active page ID, navigation position, page
+settings, visibility, display preference and controller bounds. A version 1
+profile migrates its single page and remembered widget settings. State writes
+remain atomic with backup/recovery behavior for invalid data. The limit is
+12 pages, with names of 1–80 trimmed characters. Widget-authored localStorage
+and cookies remain shared by same-origin pages for arbitrary widgets. Doodle is
+the narrow exception: the host gives bundled and managed Doodle versions a
+page-scoped storage identity. One legacy shared drawing is copied to the first
+Doodle page opened; other Doodle pages start blank. Separate Doodle drawings
+were confirmed on the physical Edge through switching, re-import, Hide/Show,
+display reconnect and normal-profile restart. Storage-write failure remains a
+documented limitation; other widgets are not isolated.
+Unsupported future state versions show a read-only controller diagnostic and
+preserve the original file; controller close and quit still complete normally.
 
-## Evidence and next acceptance
+## Evidence and acceptance
 
-Current automated tests and real Mac/Edge smoke are recorded in
-[validation](docs/validation/2026-09-22-two-window-macos.md). Task 8's final baseline
-passed 111 node:test cases and real smoke on darwin arm64 / Electron 41.5.0,
-targeting the actual XENEON EDGE. The final-review fix wave passed 124/124 tests
-and refreshed real smoke at 2026-09-29T15:45:55.893Z with zero renderer errors.
-The record contains Task 9 and final-fix verification dates and logs.
+See [multi-page validation](docs/validation/2026-09-29-multi-page-macos.md)
+for the current Node suite, real Electron smoke and physical checklist.
+The smoke ran only after a fresh check found port 8080 free; it used an isolated
+profile and left the normal-profile app untouched. It passed both exercise and
+restart phases. Do not close, relaunch or disturb the normal-profile app for
+future testing without the user's direction. Automated smoke does not establish
+physical multi-page acceptance.
 
-Smoke proves native windows/runtime selection, live settings, animation after
-controller close, activation recreation, Hide/Show and app.quit/server cleanup.
-It does not accept physical touch, visual Dock occlusion, Dock clicking, physical
-Command-Q, unplug/reconnect, restart restoration or native import UI. All ten
-physical checks are PENDING until user confirmation on this build. Prior
-single-window confirmations are historical context only. Preserve the existing
-touch-driver setup; do not infer a driver reinstall from an app window issue.
+The [two-window validation](docs/validation/2026-09-22-two-window-macos.md)
+records the earlier build. The multi-page build has now passed direct tap,
+pointer-return, drawing/scrolling, six-position, Dock, reconnect, restart,
+Hide/Show and re-import checks. The last-page deletion guard was left to
+automated tests to preserve user pages. A deliberately unavailable-widget page
+was verified in isolated Electron smoke, not the user's normal profile. The
+branch remains local, unmerged and unpushed.
 
-Continue by inspecting `git status` and preserving local work. Use the validation
-checklist in order with the user, record actual pass/fail and deviations, and
-diagnose reproducible failures before targeted changes. Do not alter or relaunch
-a user's running app/profile for tests. Smoke uses an isolated profile and refuses
-an occupied port.
+## Next steps
 
-## Setup and code map
+After changes, rerun `npm test`, and run `npm run test:smoke` only when port
+8080 is available. Inspect `artifacts/smoke-result.json` plus screenshots;
+diagnose failures and rerun affected checks. The current physical record is
+up-to-date except the intentionally unexercised unavailable-widget and
+last-page-guard cases.
 
-On Apple Silicon use native ARM64 Node.js 22 or newer, `npm ci`, then `npm start`.
-No build/package step or iCUE installation is required. Keep Electron 41.5.0 and
-macOS 12 or later. `run-all.sh` and audio helpers retain Linux/Pi assumptions;
-browser-only mode does not provide native controller IPC.
+Keep the normal-profile state and existing MacXeneonEdgeTouchDriver setup.
+The smoke runner creates its own `artifacts/smoke-profile-*` userData, refuses
+an occupied port and shuts down only its owned Electron children. The physical
+test is needed for single taps, pointer return, drawing/scrolling, actual
+button placement and native Dock coverage. Automated mouse events cannot
+substitute for those observations.
 
-- `main.js`, `app-coordinator.js`, `window-factories.js`: server/two-window
-  lifecycle, native presentation, state/command coordination and recovery.
-- `display-policy.js`, `presentation.js`: display fingerprints, safe controller
-  bounds and shared native presentation helpers.
-- `app-state.js`: state, per-widget settings, one-time legacy migration with a
-  durable acknowledgement, atomic persistence and invalid-state backup/recovery.
-- `widget-library.js`, `web-server.js`: bundled/managed catalog, staged imports,
-  confirmed same-ID overrides and canonical server routes.
-- `controller.html`, `controller.js`, `controller-view.js`, `preload-controller.js`:
-  static library/settings UI and narrow controller bridge.
-- `edge.html`, `edge.js`, `widget-runtime.js`, `preload-edge.js`: sole live widget,
-  staged preparation, settings and restricted load reporting.
-- `tests/`, `scripts/run-smoke.js`, `scripts/smoke-child.js`: node:test boundaries
-  and real Electron smoke with bounded owned-child shutdown.
+## Operation and code map
 
-## Constraints and provenance
+Use native ARM64 Node.js 22 or newer on macOS 12 or later. Run `npm ci`,
+`npm test`, then `npm start`. Electron is locked at 41.5.0. See
+[README-MACOS.md](README-MACOS.md) for display matching, imports, actual
+userData path semantics, lifecycle and limitations.
 
-Keep CommonJS, node:test, existing runtime dependencies and locked Electron.
-Use Conventional Commits. Preserve MIT LICENSE, DISCLAIMER NOTICE, all widget
-author credits and upstream history. Public repository:
-[Knack25/xeneon-edge-widget-host](https://github.com/Knack25/xeneon-edge-widget-host),
-based on Corsair-Labs/iCUE-widget-runner-RaspberryPi commit
-`1c3318533aa201f3d7a1b4b3526b8a2e2ca69630`.
+- `app-state.js`, `page-model.js`, `app-coordinator.js`: migration, page
+  invariants, state, commands and page load status.
+- `controller.html`, `controller.js`, `controller-view.js`,
+  `preload-controller.js`: controller page controls and diagnostics.
+- `edge.html`, `edge.js`, `edge-navigation.js`, `page-navigation.js`, `scene-runtime.js`,
+  `widget-runtime.js`: Edge buttons, lazy retained runtimes and staged loads.
+- `ipc-contract.js`, `preload-edge.js`, `window-factories.js`: sender
+  boundaries and native presentation.
+- `tests/`, `scripts/run-smoke.js`: Node coverage and isolated real Electron
+  smoke. The smoke uses the production server, windows and widget frames.
 
-No packaging/signing/notarization/login launch, `.icuewidget` archive importer,
-macOS audio, real telemetry or integrations are implemented. Folder validation
-exists, but arbitrary widget scripts are not a hardened trust boundary. Historical
-audit findings need reassessment before distribution. No paid software is required
-for the offline clock or this workflow.
+Keep CommonJS, node:test and Conventional Commits. Preserve the MIT license,
+DISCLAIMER NOTICE, widget author credits and upstream history. Packaging,
+signing, macOS audio, telemetry, gesture navigation and multi-widget layouts
+remain outside this branch's scope.

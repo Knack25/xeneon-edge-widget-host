@@ -1,22 +1,21 @@
 (function (root) {
   'use strict';
   const runtimeApi = typeof module === 'object' && module.exports ? require('./widget-runtime') : root.ICUEWidgetRuntime;
-  function createEdge({ document, bridge, runtime, fetchText }) {
-    runtime ||= runtimeApi.createWidgetRuntime({ document, fetchText: fetchText || (async url => { const response = await root.fetch(url, { cache: 'no-store' }); if (!response.ok) throw new Error(`Failed to fetch widget: ${response.status}`); return response.text(); }), report: result => bridge.reportLoadResult(result) });
+  const sceneApi = typeof module === 'object' && module.exports ? require('./scene-runtime') : root.ICUESceneRuntime;
+  function createEdge({ document, bridge, sceneRuntime, sceneRuntimeFactory = sceneApi.createSceneRuntime, fetchText }) {
+    const fetchWidget = fetchText || (async url => { const response = await root.fetch(url, { cache: 'no-store' }); if (!response.ok) throw new Error(`Failed to fetch widget: ${response.status}`); return response.text(); });
+    sceneRuntime ||= sceneRuntimeFactory({ document,
+      createRuntime: ({ container, pageId, report }) => runtimeApi.createWidgetRuntime({ document, container, pageId, fetchText: fetchWidget, report }),
+      report: result => bridge.reportLoadResult(result) });
     let last = null, unsubscribe, disposed = false;
     function receive(snapshot) {
       if (disposed || !snapshot || (last && snapshot.revision <= last.revision)) return;
-      const previous = last; last = snapshot;
-      const region = snapshot.scene.pages[0].regions[0];
-      const reload = !previous || previous.widget?.id !== snapshot.widget?.id || previous.catalogRevision !== snapshot.catalogRevision || !snapshot.widget;
-      // Runtime owns current-revision reporting. Catch subscription operations
-      // here, since IPC broadcasts do not await the listener's Promise.
-      void Promise.resolve().then(() => reload
-        ? runtime.load({ widget: snapshot.widget, settings: region.settings, revision: snapshot.revision })
-        : runtime.updateSettings({ settings: region.settings, revision: snapshot.revision })).catch(() => {});
+      last = snapshot;
+      // IPC broadcasts do not await listeners; the manager owns preparation and reports.
+      void Promise.resolve().then(() => sceneRuntime.receive(snapshot)).catch(() => {});
     }
     async function start() { unsubscribe = bridge.onScene(receive); receive(await bridge.getScene()); }
-    function dispose() { disposed = true; unsubscribe?.(); runtime.destroy(); }
+    function dispose() { disposed = true; unsubscribe?.(); sceneRuntime.destroy(); }
     return { start, dispose };
   }
   const api = { createEdge };

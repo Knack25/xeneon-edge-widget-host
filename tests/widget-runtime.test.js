@@ -3,12 +3,38 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createWidgetRuntime, buildWidgetShell, buildShimScript } = require('../widget-runtime');
 const { createEdge } = require('../edge');
+const { createWidgetLibrary } = require('../widget-library');
 const clock = { id: 'com.shocksim.robextourbillon', baseUrl: '/widgets/clock', entryUrl: '/widgets/clock/index.html', manifest: { id: 'com.shocksim.robextourbillon', name: 'Clock' } };
 const doodle = { id: 'com.corsair.widget.doodle-pad', baseUrl: '/managed-widgets/doodle', entryUrl: '/managed-widgets/doodle/index.html', manifest: { id: 'com.corsair.widget.doodle-pad', name: 'Doodle' } };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = () => new Promise(resolve => setImmediate(resolve));
+test('Doodle toolbar survives focus restoration but hides when the document becomes hidden', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const elements = new Map(['toolbar', 'toolbarHandle'].map(id => {
+    const classes = new Set();
+    return [id, { classList: { add: value => classes.add(value), remove: value => classes.delete(value), contains: value => classes.has(value) } }];
+  }));
+  const windowEvents = new Map();
+  const documentEvents = new Map();
+  const document = { hidden: false, getElementById: id => elements.get(id), addEventListener: (name, fn) => documentEvents.set(name, fn) };
+  const context = vm.createContext({ document, window: { addEventListener: (name, fn) => windowEvents.set(name, fn) }, clearTimeout, flushPendingSave() {} });
+  const toolbarCode = html.slice(html.indexOf('    function showToolbar()'), html.indexOf('    // --- Color buttons ---'));
+  const lifecycleStart = html.search(/    \/\/ --- (?:Hide panel on focus loss|Document lifecycle) ---/);
+  assert.notEqual(lifecycleStart, -1);
+  const lifecycleCode = html.slice(lifecycleStart, html.indexOf('    // --- Init ---'));
+  vm.runInContext('let toolbarTimeout = null; let toolbarVisible = true;\n' + toolbarCode + lifecycleCode + '\nshowToolbar();', context);
+  windowEvents.get('blur')?.({ type: 'blur' });
+  assert.equal(elements.get('toolbar').classList.contains('visible'), true);
+  assert.equal(elements.get('toolbarHandle').classList.contains('hidden'), true);
+  document.hidden = true;
+  documentEvents.get('visibilitychange')();
+  assert.equal(elements.get('toolbar').classList.contains('visible'), false);
+  assert.equal(elements.get('toolbarHandle').classList.contains('hidden'), false);
+});
 // Substitute native frame navigation only. Runtime controls srcdoc, staging,
 // settings, frame ownership and listener disposal; tests decide navigation order.
 function fixture(options = {}) {
@@ -32,8 +58,160 @@ function fixture(options = {}) {
   const runtime = createWidgetRuntime({ document, fetchText: async () => '<html><head></head><body>Widget</body></html>', report: value => reports.push(value), ...options });
   return { runtime, frames, region, reports, document, live: () => region.children.find(frame => frame.dataset.live === 'true'), async load(widget = clock, revision = 1, settings = {}) { const result = runtime.load({ widget, revision, settings }); await settle(); frames.at(-1).finish(); return result; } };
 }
+test('Doodle frame receives its stable page ID without changing other widget identities', async () => {
+  const a = fixture({ pageId: 'page-a' });
+  await a.load(doodle);
+  assert.equal(a.live().contentWindow.icuePageId, 'page-a');
+  assert.equal(a.live().contentWindow.widgetId, doodle.id);
+  assert.equal(a.live().contentWindow.uniqueId, doodle.id + ':page:page-a');
+  const b = fixture({ pageId: 'page-b' });
+  await b.load(doodle);
+  assert.equal(b.live().contentWindow.icuePageId, 'page-b');
+  assert.equal(b.live().contentWindow.uniqueId, doodle.id + ':page:page-b');
+  const other = fixture({ pageId: 'page-c' });
+  await other.load(clock);
+  assert.equal(other.live().contentWindow.icuePageId, undefined);
+  assert.equal(other.live().contentWindow.uniqueId, clock.id);
+});
+
+test('Edge forwards scene page identity through its real widget runtime factory', async () => {
+  const f = fixture();
+  let runtime;
+  const edge = createEdge({ document: f.document,
+    bridge: { onScene: () => () => {}, getScene: async () => null },
+    sceneRuntimeFactory: ({ createRuntime }) => {
+      runtime = createRuntime({ container: f.region, pageId: 'edge-page', report: () => {} });
+      return { receive() {}, destroy() { runtime.destroy(); } };
+    }, fetchText: async () => '<html><head></head><body>Doodle</body></html>' });
+  await edge.start();
+  const loading = runtime.load({ widget: doodle, settings: {}, revision: 1 });
+  await settle(); f.frames.at(-1).finish(); await loading;
+  assert.equal(f.frames.at(-1).contentWindow.icuePageId, 'edge-page');
+  edge.dispose();
+});
+
+test('Doodle migrates the legacy drawing once and restores separate page canvases', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const entries = new Map([[doodle.id, JSON.stringify({ canvasData: 'legacy-drawing', canvasWidth: 20, canvasHeight: 20 })]]);
+  const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  function page(pageId) {
+    const drawn = [];
+    const context = { window: null, addEventListener() {}, localStorage: storage, Image: class { set src(value) { this.source = value; this.onload(); } },
+      canvas: { width: 20, height: 20 }, ctx: { clearRect() {}, drawImage(image) { drawn.push(image.source); } },
+      normalizeHistoryStack: () => [], updateUndoRedoButtons() {}, normalizeToolState: () => ({ currentColorIndex: 0, currentBrushSize: 2, isEraser: false, toolbarVisible: true }),
+      applyToolSelectionUI() {}, console, setTimeout, clearTimeout };
+    context.window = context;
+    vm.createContext(context);
+    vm.runInContext(buildShimScript(doodle, {}, pageId), context);
+    vm.runInContext(code, context);
+    return { context, read: () => vm.runInContext('readStoredState()', context),
+      write: data => { context.dataToSave = data; return vm.runInContext('writeStoredState(dataToSave)', context); },
+      load: () => vm.runInContext('loadFromStorage()', context), drawn };
+  }
+  const first = page('page-a');
+  first.load();
+  assert.equal(first.context.uniqueId, doodle.id + ':page:page-a');
+  assert.deepEqual(first.drawn, ['legacy-drawing']);
+  assert.equal(first.read().canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
+  assert.equal(JSON.parse(entries.get(doodle.id + ':page:page-a')).canvasData, 'legacy-drawing');
+  const second = page('page-b');
+  second.load();
+  assert.equal(second.context.uniqueId, doodle.id + ':page:page-b');
+  assert.deepEqual(second.drawn, []);
+  assert.equal(second.write({ canvasData: 'second-drawing' }), true);
+  assert.equal(first.write({ canvasData: 'first-drawing' }), true);
+  const reopenedFirst = page('page-a'); reopenedFirst.load();
+  const reopenedSecond = page('page-b'); reopenedSecond.load();
+  assert.deepEqual(reopenedFirst.drawn, ['first-drawing']);
+  assert.deepEqual(reopenedSecond.drawn, ['second-drawing']);
+  assert.equal(JSON.parse(entries.get(doodle.id)).canvasData, 'legacy-drawing');
+});
+
+test('Doodle retains legacy bytes when a migration storage write fails and retries for the claimant', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const original = JSON.stringify({ canvasData: 'legacy-drawing' });
+  const entries = new Map([[doodle.id, original]]);
+  let blockedKey = doodle.id + ':page:page-a';
+  const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => { if (key === blockedKey) throw Error('quota'); entries.set(key, value); } };
+  function read(pageId) {
+    const context = { window: null, addEventListener() {}, localStorage: storage, console };
+    context.window = context; vm.createContext(context);
+    vm.runInContext(buildShimScript(doodle, {}, pageId), context);
+    vm.runInContext(code, context);
+    return { state: vm.runInContext('readStoredState()', context), uniqueId: context.uniqueId };
+  }
+  const first = read('page-a');
+  assert.equal(first.state.canvasData, 'legacy-drawing');
+  assert.equal(first.uniqueId, doodle.id);
+  assert.equal(entries.get(doodle.id), original);
+  assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
+  assert.equal(read('page-b').state, null);
+  blockedKey = null;
+  assert.equal(read('page-a').state.canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id + ':page:page-a'), original);
+});
+
+test('Doodle keeps the shared drawing readable when the ownership marker cannot be saved', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const original = JSON.stringify({ canvasData: 'legacy-drawing' });
+  const entries = new Map([[doodle.id, original]]);
+  const context = { window: null, addEventListener() {}, console,
+    localStorage: { getItem: key => entries.get(key) ?? null, setItem: (key, value) => {
+      if (key === doodle.id + ':legacy-page') throw Error('quota'); entries.set(key, value);
+    } } };
+  context.window = context; vm.createContext(context);
+  vm.runInContext(buildShimScript(doodle, {}, 'page-a'), context);
+  vm.runInContext(code, context);
+  assert.equal(context.uniqueId, doodle.id);
+  assert.equal(vm.runInContext('readStoredState()', context).canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id), original);
+  assert.equal(entries.has(doodle.id + ':page:page-a'), false);
+});
+
+test('managed legacy Doodle override gets separate saved canvases through its unchanged uniqueId lookup', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-doodle-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const managedRoot = path.join(root, 'managed');
+  const imported = path.join(managedRoot, 'older-import');
+  fs.mkdirSync(imported, { recursive: true });
+  fs.writeFileSync(path.join(imported, 'manifest.json'), JSON.stringify({ id: doodle.id, name: 'Doodle pad' }));
+  // The user's older managed widget uses uniqueId verbatim as its storage key.
+  fs.writeFileSync(path.join(imported, 'index.html'), `<html><head></head><body><script>
+    const widgetId = uniqueId;
+    window.savedCanvas = JSON.parse(localStorage.getItem(widgetId) || 'null');
+    window.saveCanvas = canvasData => localStorage.setItem(widgetId, JSON.stringify({ canvasData }));
+  </script></body></html>`);
+  const catalog = createWidgetLibrary({ bundledRoot: path.join(__dirname, '../widgets'), managedRoot }).scan();
+  const selected = catalog.find(widget => widget.id === doodle.id);
+  assert.equal(selected.source, 'managed');
+  const html = fs.readFileSync(path.join(imported, 'index.html'), 'utf8');
+  const entries = new Map([[doodle.id, JSON.stringify({ canvasData: 'legacy-drawing' })]]);
+  const localStorage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  function open(pageId) {
+    const shell = buildWidgetShell(selected, html, {}, 'http://127.0.0.1:8080/edge.html', pageId);
+    const scripts = [...shell.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
+    const context = { window: null, addEventListener() {}, localStorage, setTimeout, console, Promise };
+    context.window = context; vm.createContext(context);
+    for (const script of scripts) vm.runInContext(script, context);
+    return context;
+  }
+  const first = open('page-a');
+  assert.equal(first.savedCanvas.canvasData, 'legacy-drawing');
+  assert.equal(first.uniqueId, doodle.id + ':page:page-a');
+  const second = open('page-b');
+  assert.equal(second.savedCanvas, null);
+  second.saveCanvas('second-drawing');
+  first.saveCanvas('first-drawing');
+  assert.equal(open('page-a').savedCanvas.canvasData, 'first-drawing');
+  assert.equal(open('page-b').savedCanvas.canvasData, 'second-drawing');
+  assert.equal(JSON.parse(entries.get(doodle.id)).canvasData, 'legacy-drawing');
+});
 test('successful staging promotes one frame and settings notify its initialized shim', async () => {
-  const f = fixture(); await f.load(); const frame = f.live(); let updates = 0;
+  const f = fixture(); assert.deepEqual(await f.load(), { stale: false, ok: true }); const frame = f.live(); let updates = 0;
   frame.contentWindow.icueEvents.onDataUpdated = () => updates++;
   await f.runtime.updateSettings({ revision: 2, settings: { showSeconds: false, widgetId: 'spoofed' } });
   assert.equal(frame.contentWindow.showSeconds, false); assert.equal(updates, 1);
@@ -41,14 +219,27 @@ test('successful staging promotes one frame and settings notify its initialized 
   assert.deepEqual(f.reports.at(-1), { revision: 2, ok: true });
   await f.load(doodle, 3); assert.equal(f.region.children.length, 1); assert.ok(frame.removed); assert.equal(f.live().dataset.widgetId, doodle.id);
 });
+test('explicit runtime container owns its frames without touching the primary region', async () => {
+  const child = { children: [], append(frame) { this.children.push(frame); frame.parent = this; } };
+  const f = fixture({ container: child });
+  assert.deepEqual(await f.load(), { stale: false, ok: true });
+  assert.equal(f.region.children.length, 0); assert.equal(child.children.length, 1);
+  f.runtime.destroy(); assert.equal(child.children.length, 0);
+});
 test('fetch and shell failure retain the previous live frame and report current failure', async () => {
   let fail = false; const f = fixture({ fetchText: async () => { if (fail) throw Error('missing'); return '<head></head>'; } });
   await f.load(); const previous = f.live(); fail = true;
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 2, settings: {} }), /missing/);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 2, settings: {} }), { stale: false, ok: false, message: 'missing' });
   assert.equal(f.live(), previous); assert.equal(f.region.children.length, 1); assert.deepEqual(f.reports.at(-1), { revision: 2, ok: false, message: 'missing' });
   fail = false;
-  await assert.rejects(f.runtime.load({ widget: { ...doodle, baseUrl: 'http://[' }, revision: 3, settings: {} }));
+  assert.equal((await f.runtime.load({ widget: { ...doodle, baseUrl: 'http://[' }, revision: 3, settings: {} })).ok, false);
   assert.equal(f.live(), previous);
+});
+test('preparation failure resolves with a structured result and preserves failure reporting', async () => {
+  const f = fixture({ fetchText: async () => { throw Error('missing asset'); } });
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 8, settings: {} }),
+    { stale: false, ok: false, message: 'missing asset' });
+  assert.deepEqual(f.reports.at(-1), { revision: 8, ok: false, message: 'missing asset' });
 });
 test('obsolete fetch and frame navigation never promote or report success', async () => {
   const slow = deferred(); const f = fixture({ fetchText: url => url === clock.entryUrl ? slow.promise : Promise.resolve('<head></head>') });
@@ -75,12 +266,13 @@ test('preparation deadline includes stalled fetch and initial async settings and
   t.after(() => f.runtime.destroy());
   await f.load(); const previous = f.live(); blockFetch = true;
   const watchdog = () => new Promise((_, reject) => setTimeout(() => reject(Error('preparation failed to enforce its deadline')), 150));
-  await assert.rejects(Promise.race([f.runtime.load({ widget: doodle, revision: 2 }), watchdog()]), /timed out/);
+  assert.deepEqual(await Promise.race([f.runtime.load({ widget: doodle, revision: 2 }), watchdog()]), { stale: false, ok: false, message: 'Widget preparation timed out.' });
   assert.equal(f.live(), previous); blocked.resolve('<head></head>'); blockFetch = false;
   const loading = f.runtime.load({ widget: doodle, revision: 3, settings: { transparency: 22 } });
-  const failure = assert.rejects(Promise.race([loading, watchdog()]), /timed out/); await settle(); const staged = f.frames.at(-1); staged.finish();
+  const failure = Promise.race([loading, watchdog()]); await settle(); const staged = f.frames.at(-1); staged.finish();
   staged.contentWindow.icueEvents.onDataUpdated = () => new Promise(() => {});
-  await settle(); await f.runtime.updateSettings({ revision: 4, settings: { transparency: 33 } }); await failure;
+  await settle(); await f.runtime.updateSettings({ revision: 4, settings: { transparency: 33 } });
+  assert.deepEqual(await failure, { stale: false, ok: false, message: 'Widget preparation timed out.' });
   assert.equal(f.live(), previous); assert.equal(f.region.children.length, 1); assert.equal(staged.listenerCount(), 0);
   assert.equal(f.reports.at(-1).revision, 4); assert.equal(f.reports.at(-1).ok, false);
   await f.runtime.updateSettings({ revision: 5, settings: { transparency: 44 } });
@@ -101,14 +293,14 @@ test('initial settings can advance to the latest revision and cancelled preparat
 });
 test('frame failure, timeout and destroy dispose staged frames without losing live content', async () => {
   const f = fixture({ frameLoadTimeoutMs: 15 }); await f.load(); const previous = f.live();
-  const failed = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).dispatch('error'); await assert.rejects(failed, /frame/i); assert.equal(f.live(), previous);
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 3, settings: {} }), /timed out/i); assert.equal(f.region.children.length, 1);
+  const failed = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).dispatch('error'); assert.equal((await failed).ok, false); assert.equal(f.live(), previous);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 3, settings: {} }), { stale: false, ok: false, message: 'Widget preparation timed out.' }); assert.equal(f.region.children.length, 1);
   const pending = f.runtime.load({ widget: doodle, revision: 4, settings: {} }); await settle(); f.runtime.destroy(); assert.deepEqual(await pending, { stale: true }); assert.equal(f.region.children.length, 0);
   assert.ok(f.frames.every(frame => frame.listenerCount() === 0));
 });
 test('observable script failures block promotion and later errors report current revision', async () => {
   const f = fixture(); await f.load(); const previous = f.live();
-  const bad = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).finish('broken script'); await assert.rejects(bad, /broken script/);
+  const bad = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).finish('broken script'); assert.deepEqual(await bad, { stale: false, ok: false, message: 'broken script' });
   assert.equal(f.live(), previous); assert.equal(f.reports.at(-1).ok, false);
   await f.load(clock, 3); await f.runtime.updateSettings({ revision: 4, settings: {} }); f.live().failScript('later failure'); await settle();
   assert.deepEqual(f.reports.at(-1), { revision: 4, ok: false, message: 'later failure' });
@@ -149,11 +341,11 @@ test('later settings recover a live widget after a transient callback throw or r
 test('settings after failed replacement still withhold requested properties from retained content', async () => {
   let fail = false; const f = fixture({ fetchText: async () => { if (fail) throw Error('replacement failed'); return '<head></head>'; } });
   await f.load(); const previous = f.live(); fail = true;
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }), /replacement failed/);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }), { stale: false, ok: false, message: 'replacement failed' });
   await f.runtime.updateSettings({ revision: 3, settings: { transparency: 33 } });
   assert.equal(f.live(), previous); assert.equal(previous.contentWindow.transparency, 80);
   assert.deepEqual(f.reports.at(-1), { revision: 3, ok: false, message: 'replacement failed' });
-  const missing = fixture(); await assert.rejects(missing.runtime.load({ widget: null, revision: 1 }), /missing/);
+  const missing = fixture(); assert.deepEqual(await missing.runtime.load({ widget: null, revision: 1 }), { stale: false, ok: false, message: 'Selected widget is missing from the catalog.' });
   assert.deepEqual(await missing.runtime.updateSettings({ revision: 2, settings: {} }), { failed: true });
   assert.deepEqual(missing.reports.at(-1), { revision: 2, ok: false, message: 'Selected widget is missing from the catalog.' });
 });
@@ -174,25 +366,29 @@ test('shell keeps relative assets under catalog base and initializes legacy sens
   const values = []; const sensor = window.plugins.Sensorsdataprovider; sensor.asyncResponse.connect((...args) => values.push(args)); sensor.getSensorValue('value', 'right'); sensor.getSensorUnits('unit'); await new Promise(resolve => setTimeout(resolve, 5));
   assert.deepEqual(values, [['value', 57], ['unit', '%']]); assert.equal(sensor.getDefaultSensorIdBlock('load'), 'left');
 });
-function snapshot(revision, widget = clock, catalogRevision = 0, settings = {}) { return { revision, widget, catalogRevision, scene: { pages: [{ regions: [{ widgetId: widget?.id || 'missing', settings }] }] } }; }
-test('Edge subscribes before initial query and catalog revisions reload same-ID assets', async () => {
-  const f = fixture(); let receive; const initial = deferred();
-  const edge = createEdge({ document: f.document, runtime: f.runtime, bridge: { onScene(fn) { receive = fn; return () => {}; }, getScene: () => initial.promise } });
+function snapshot(revision, widget = clock, catalogRevision = 0, settings = {}) { return { revision, widget, catalogRevision,
+  pageWidgets: { A: widget }, pageGenerations: { A: catalogRevision + 1 },
+  scene: { activePageId: 'A', pages: [{ id: 'A', regions: [{ widgetId: widget?.id || 'missing', settings }] }] } }; }
+test('Edge subscribes before querying and only forwards the freshest scene to its manager', async () => {
+  let receive, unsubscribed = false; const initial = deferred(); const snapshots = [];
+  const sceneRuntime = { receive(value) { snapshots.push(value); return Promise.resolve(); }, destroy() { this.destroyed = true; } };
+  const edge = createEdge({ sceneRuntime, bridge: { onScene(fn) { receive = fn; return () => { unsubscribed = true; }; }, getScene: () => initial.promise } });
   const start = edge.start(); receive(snapshot(2, clock, 0, { transparency: 22 })); await settle();
-  initial.resolve(snapshot(1)); await start; f.frames.at(-1).finish(); await settle();
-  receive(snapshot(3, clock, 0, { transparency: 33 })); await settle(); assert.equal(f.frames.length, 1); assert.equal(f.live().contentWindow.transparency, 33);
-  receive(snapshot(4, clock, 1)); await settle(); assert.equal(f.frames.length, 2); f.frames.at(-1).finish(); await settle(); assert.equal(f.region.children.length, 1);
-  edge.dispose();
+  initial.resolve(snapshot(1)); await start;
+  receive(snapshot(3, clock, 0, { transparency: 33 })); await settle();
+  assert.deepEqual(snapshots.map(value => value.revision), [2, 3]);
+  edge.dispose(); assert.equal(unsubscribed, true); assert.equal(sceneRuntime.destroyed, true);
+  receive(snapshot(4)); await settle(); assert.equal(snapshots.length, 2);
 });
-test('missing widget invalidates pending loads and reports failure without app overlay', async () => {
-  const f = fixture(); let receive;
-  const edge = createEdge({ document: f.document, runtime: f.runtime, bridge: { getScene: async () => snapshot(1), onScene(fn) { receive = fn; return () => {}; } } });
-  await edge.start(); await settle(); receive(snapshot(2, null)); await settle(); f.frames[0].dispatch('load'); await settle();
-  assert.equal(f.region.children.length, 0); assert.equal(f.reports.at(-1).revision, 2); assert.equal(f.reports.at(-1).ok, false);
+test('missing widget remains a scene-manager concern and Edge has no controller overlay', async () => {
+  const snapshots = []; const edge = createEdge({ sceneRuntime: { receive(value) { snapshots.push(value); }, destroy() {} },
+    bridge: { getScene: async () => snapshot(1, null), onScene() { return () => {}; } } });
+  await edge.start(); await settle(); assert.equal(snapshots[0].pageWidgets.A, null);
   const html = fs.readFileSync(require.resolve('../edge.html'), 'utf8'); assert.doesNotMatch(html, /<button|toolbar|id="status"|Escape/); edge.dispose();
 });
 test('runtime and Edge load in browser without CommonJS or an Escape listener', () => {
   const events = []; const context = vm.createContext({ addEventListener: name => events.push(name) });
-  for (const file of ['widget-settings.js', 'widget-runtime.js', 'edge.js']) vm.runInContext(fs.readFileSync(require.resolve(`../${file}`), 'utf8'), context);
-  assert.equal(typeof context.ICUEWidgetRuntime.createWidgetRuntime, 'function'); assert.equal(typeof context.ICUEEdge.createEdge, 'function'); assert.deepEqual(events, []);
+  for (const file of ['widget-settings.js', 'widget-runtime.js', 'scene-runtime.js', 'edge.js']) vm.runInContext(fs.readFileSync(require.resolve(`../${file}`), 'utf8'), context);
+  assert.equal(typeof context.ICUEWidgetRuntime.createWidgetRuntime, 'function'); assert.equal(typeof context.ICUESceneRuntime.createSceneRuntime, 'function');
+  assert.equal(typeof context.ICUEEdge.createEdge, 'function'); assert.deepEqual(events, []);
 });

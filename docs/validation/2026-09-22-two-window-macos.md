@@ -62,24 +62,27 @@ zero renderer errors; app.quit/before-quit exit and closed `127.0.0.1:8080`.
 The quit path is used by Command-Q, but no physical keyboard shortcut is tested.
 Screenshots show renderer content and cannot establish native Dock occlusion.
 
-## Physical acceptance — user confirmation required
+## Physical acceptance — passed 2026-09-29
 
-All results are PENDING for this build. Automated tests and earlier single-window
-user confirmations do not replace these checks. Record pass/fail, actual date,
+Hardware acceptance began 2026-09-29 on the normal-profile feature build
+(`da9fac6`), with the Doodle focus-loss fix applied during testing. All ordered
+checks passed by user confirmation; results and the initial deviation are recorded below.
+Automated tests and earlier single-window confirmations do not replace these checks.
+Record pass/fail, actual date,
 macOS/architecture/Electron/display bounds and deviations when the user retests.
 
 | # | Ordered check | Result | Deviation / evidence |
 | --- | --- | --- | --- |
-| 1 | Controller opens on laptop while Edge remains fullscreen | PENDING user confirmation | Automated window creation is covered; physical observation pending |
-| 2 | Select Clock, Doodle and one imported widget without leaving fullscreen | PENDING user confirmation | Clock/Doodle smoke covered; imported-widget UI acceptance pending |
-| 3 | Change a visible setting and observe the live Edge update | PENDING user confirmation | Doodle background smoke covered; user observation pending |
-| 4 | Tap, scroll, Doodle hold-drag, pointer return and Dock coverage | PENDING user confirmation | No physical touch or native Dock occlusion proof |
-| 5 | Close controller, confirm Edge continues, reopen from Dock | PENDING user confirmation | Automated destruction/activation covered; Dock click pending |
-| 6 | Hide/show Edge only from controller | PENDING user confirmation | Automated buttons covered; physical acceptance pending |
-| 7 | Unplug/reconnect Edge and confirm unique-match restoration | PENDING user confirmation | Boundary coverage does not replace cable test |
-| 8 | Restart app and confirm saved widget/display/settings restoration | PENDING user confirmation | Isolated smoke does not exercise real-profile restart |
-| 9 | Re-import same widget ID, cancel once then confirm once | PENDING user confirmation | Import boundary tests covered; native import UI pending |
-| 10 | Command-Q exits controller, Edge and server | PENDING user confirmation | app.quit/server cleanup covered; physical shortcut pending |
+| 1 | Controller opens on laptop while Edge remains fullscreen | PASS — user confirmed 2026-09-29 | Controller on laptop, fullscreen widget on XENEON Edge, no app controls over widget |
+| 2 | Select Clock, Doodle and one imported widget without leaving fullscreen | PASS — user confirmed 2026-09-29 | Clock, bundled Doodle and re-imported managed Doodle switch without leaving Edge fullscreen |
+| 3 | Change a visible setting and observe the live Edge update | PASS — user confirmed 2026-09-29 | Doodle background color updates immediately from controller while Edge stays fullscreen |
+| 4 | Tap, scroll, Doodle hold-drag, pointer return and Dock coverage | PASS — retested 2026-09-29 | Drawing passes. Initial Doodle toolbar collapse on focus restoration was reproduced by clicking the controller after opening it with the mouse. Removed Doodle's blur-hide listener while preserving document-hidden handling. User confirmed toolbar fix, tool activation, pointer return to its original laptop position, supported touch scrolling and Dock remaining behind fullscreen Edge; regression test passes (125/125 suite) |
+| 5 | Close controller, confirm Edge continues, reopen from Dock | PASS — user confirmed 2026-09-29 | Edge stays fullscreen and usable after controller closes; Dock activation reopens controller on laptop without disturbing Doodle |
+| 6 | Hide/show Edge only from controller | PASS — user confirmed 2026-09-29 | Controller Hide/Show returns the same widget and settings fullscreen on the Edge |
+| 7 | Unplug/reconnect Edge and confirm unique-match restoration | PASS — user confirmed 2026-09-29 | Controller remains usable through display disconnect; reconnect restores fullscreen widget to the Edge without appearing on the laptop |
+| 8 | Restart app and confirm saved widget/display/settings restoration | PASS — user confirmed 2026-09-29 | Normal-profile relaunch restores controller on laptop and the same widget fullscreen on Edge with saved settings |
+| 9 | Re-import same widget ID, cancel once then confirm once | PASS — user confirmed 2026-09-29 | Importing bundled Doodle prompts for replacement; Cancel preserves the current widget, confirmed replacement remains usable on Edge |
+| 10 | Command-Q exits controller, Edge and server | PASS — user confirmed 2026-09-29 | Both windows closed with Command-Q; no TCP listener remained on port 8080 before relaunch |
 
 ## Operating notes for acceptance
 

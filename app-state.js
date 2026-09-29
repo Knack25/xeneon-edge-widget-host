@@ -1,7 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { MAX_PAGES, NAVIGATION_POSITIONS } = require('./page-model');
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const FULL_PAGE_BOUNDS = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -65,26 +66,67 @@ function createDefaultState(defaultWidgetId) {
     version: STATE_VERSION,
     revision: 0,
     legacySettingsMigrated: false,
-    widgetSettings: {},
     controllerBounds: null,
     displayPreference: { mode: 'automatic', fingerprint: null },
     scene: {
       visible: true,
       activePageId: 'page-1',
+      navigationPosition: 'bottom-right',
       pages: [{ id: 'page-1', name: 'Page 1', regions: [{
         id: 'primary', widgetId: nonemptyString(defaultWidgetId, null), settings: {},
         bounds: { ...FULL_PAGE_BOUNDS }
-      }] }]
+      }], widgetSettings: {} }]
     }
   };
 }
 
+function validPage(page) {
+  const validString = value => typeof value === 'string' && value.trim().length > 0;
+  if (!isRecord(page) || !validString(page.id) || !validString(page.name) || page.name.trim().length > 80 ||
+    !Array.isArray(page.regions) || page.regions.length !== 1 || !isRecord(page.regions[0])) return false;
+  const region = page.regions[0];
+  return validString(region.id) && (region.widgetId === null || validString(region.widgetId)) &&
+    isRecord(region.settings) && isRecord(region.bounds) &&
+    Object.keys(FULL_PAGE_BOUNDS).every(key => region.bounds[key] === FULL_PAGE_BOUNDS[key]);
+}
+
+function validScene(scene, version) {
+  if (!isRecord(scene) || typeof scene.visible !== 'boolean' || !Array.isArray(scene.pages) ||
+    scene.pages.length < 1 || scene.pages.length > (version === 1 ? 1 : MAX_PAGES) ||
+    scene.pages.some(page => !validPage(page))) return false;
+  const ids = scene.pages.map(page => page.id);
+  if (new Set(ids).size !== ids.length) return false;
+  if (version === 2 && (!NAVIGATION_POSITIONS.includes(scene.navigationPosition) ||
+    scene.pages.some(page => !isRecord(page.widgetSettings)))) return false;
+  return true;
+}
+
+function settingsAreLossless(scene, version) {
+  function equalWithoutGetters(raw, normalized) {
+    if (raw === null || typeof raw !== 'object') return Object.is(raw, normalized);
+    if ((Array.isArray(raw) !== Array.isArray(normalized)) ||
+      (!Array.isArray(raw) && (!isRecord(raw) || !isRecord(normalized))) ||
+      Object.getOwnPropertySymbols(raw).length) return false;
+    const keys = Object.keys(raw);
+    if (keys.length !== Object.keys(normalized).length) return false;
+    if (Array.isArray(raw) && raw.length !== normalized.length) return false;
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value') || !Object.hasOwn(normalized, key) ||
+        !equalWithoutGetters(descriptor.value, normalized[key])) return false;
+    }
+    return true;
+  }
+  return scene.pages.every(page =>
+    equalWithoutGetters(page.regions[0].settings, normalizeSettings(page.regions[0].settings)) &&
+    (version === 1 || equalWithoutGetters(page.widgetSettings, normalizeWidgetSettings(page.widgetSettings))));
+}
+
 function normalizeState(raw, { defaultWidgetId } = {}) {
   const state = createDefaultState(defaultWidgetId);
-  if (!isRecord(raw) || raw.version !== STATE_VERSION) return state;
+  if (!isRecord(raw) || ![1, STATE_VERSION].includes(raw.version)) return state;
   if (Number.isSafeInteger(raw.revision) && raw.revision >= 0) state.revision = raw.revision;
   if (typeof raw.legacySettingsMigrated === 'boolean') state.legacySettingsMigrated = raw.legacySettingsMigrated;
-  state.widgetSettings = normalizeWidgetSettings(raw.widgetSettings);
   const bounds = raw.controllerBounds;
   if (isRecord(bounds) && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(bounds[key])) && bounds.width > 0 && bounds.height > 0) {
     state.controllerBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
@@ -99,19 +141,20 @@ function normalizeState(raw, { defaultWidgetId } = {}) {
   }
   if (!isRecord(raw.scene)) return state;
   if (typeof raw.scene.visible === 'boolean') state.scene.visible = raw.scene.visible;
-  const page = Array.isArray(raw.scene.pages) ? raw.scene.pages[0] : null;
-  if (!isRecord(page)) return state;
-  const normalizedPage = state.scene.pages[0];
-  normalizedPage.id = nonemptyString(page.id, normalizedPage.id);
-  normalizedPage.name = nonemptyString(page.name, normalizedPage.name);
-  state.scene.activePageId = normalizedPage.id;
-  const region = Array.isArray(page.regions) ? page.regions[0] : null;
-  if (isRecord(region)) {
-    const normalizedRegion = normalizedPage.regions[0];
-    normalizedRegion.id = nonemptyString(region.id, normalizedRegion.id);
-    normalizedRegion.widgetId = nonemptyString(region.widgetId, normalizedRegion.widgetId);
-    normalizedRegion.settings = normalizeSettings(region.settings);
-  }
+  if (!validScene(raw.scene, raw.version)) return state;
+  state.scene.navigationPosition = raw.version === 2 ? raw.scene.navigationPosition : 'bottom-right';
+  state.scene.pages = raw.scene.pages.map(page => {
+    const region = page.regions[0];
+    const settings = normalizeSettings(region.settings);
+    const widgetSettings = raw.version === 1 ? normalizeWidgetSettings(raw.widgetSettings) : normalizeWidgetSettings(page.widgetSettings);
+    if (raw.version === 1 && region.widgetId && !UNSAFE_KEYS.has(region.widgetId)) {
+      widgetSettings[region.widgetId] = { ...widgetSettings[region.widgetId], ...settings };
+    }
+    return { id: page.id, name: page.name.trim(), widgetSettings, regions: [{
+      id: region.id, widgetId: region.widgetId, settings, bounds: { ...FULL_PAGE_BOUNDS }
+    }] };
+  });
+  state.scene.activePageId = state.scene.pages.some(page => page.id === raw.scene.activePageId) ? raw.scene.activePageId : state.scene.pages[0].id;
   return state;
 }
 
@@ -119,25 +162,25 @@ function normalizeState(raw, { defaultWidgetId } = {}) {
 // formatting/key-order changes are benign; lost settings or invalid known
 // fields warrant retaining the original file before the first rewrite.
 function persistedRecoveryReason(raw, normalized) {
-  if (!isRecord(raw) || raw.version !== STATE_VERSION) return 'unsupported-state';
-  const validString = value => typeof value === 'string' && value.trim().length > 0;
+  if (!isRecord(raw) || ![1, STATE_VERSION].includes(raw.version)) return 'unsupported-state';
   const validBounds = value => isRecord(value) && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) && value.width > 0 && value.height > 0;
   const preference = raw.displayPreference;
   const fingerprint = preference?.fingerprint;
   const validFingerprint = value => isRecord(value) && typeof value.label === 'string' && ['physicalWidth', 'physicalHeight'].every(key => Number.isFinite(value[key]) && value[key] > 0);
-  const page = raw.scene?.pages?.[0]; const region = page?.regions?.[0];
   if (!Number.isSafeInteger(raw.revision) || raw.revision < 0 ||
     (raw.legacySettingsMigrated !== undefined && typeof raw.legacySettingsMigrated !== 'boolean') ||
     (raw.controllerBounds !== null && !validBounds(raw.controllerBounds)) ||
     !isRecord(preference) || !['automatic', 'manual'].includes(preference.mode) ||
     (fingerprint !== null && !validFingerprint(fingerprint)) || (preference.mode === 'manual' && !validFingerprint(fingerprint)) ||
-    !isRecord(raw.scene) || typeof raw.scene.visible !== 'boolean' || !Array.isArray(raw.scene.pages) || raw.scene.pages.length !== 1 ||
-    !isRecord(page) || !validString(page.id) || !validString(page.name) || raw.scene.activePageId !== page.id ||
-    !Array.isArray(page.regions) || page.regions.length !== 1 || !isRecord(region) || !validString(region.id) ||
-    !(region.widgetId === null || validString(region.widgetId)) || !isRecord(region.settings) ||
-    !isRecord(region.bounds) || Object.keys(FULL_PAGE_BOUNDS).some(key => region.bounds[key] !== FULL_PAGE_BOUNDS[key])) return 'invalid-state';
-  if ((raw.widgetSettings !== undefined && JSON.stringify(raw.widgetSettings) !== JSON.stringify(normalized.widgetSettings)) ||
-    JSON.stringify(region.settings) !== JSON.stringify(normalized.scene.pages[0].regions[0].settings)) return 'lossy-state';
+    !validScene(raw.scene, raw.version)) return 'invalid-state';
+  for (const [index, page] of raw.scene.pages.entries()) {
+    const normalizedPage = normalized.scene.pages[index];
+    if (JSON.stringify(page.regions[0].settings) !== JSON.stringify(normalizedPage.regions[0].settings) ||
+      (raw.version === 2 && JSON.stringify(page.widgetSettings) !== JSON.stringify(normalizedPage.widgetSettings))) return 'lossy-state';
+  }
+  if (raw.version === 1 && raw.widgetSettings !== undefined &&
+    JSON.stringify(raw.widgetSettings) !== JSON.stringify(normalizeWidgetSettings(raw.widgetSettings))) return 'lossy-state';
+  if (!raw.scene.pages.some(page => page.id === raw.scene.activePageId)) return 'invalid-active-page';
   return null;
 }
 
@@ -148,6 +191,7 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   let dirty = true;
   let timer = null;
   let recovery = null;
+  let readOnly = false;
   let source;
   try {
     source = fs.readFileSync(statePath, 'utf8');
@@ -163,9 +207,15 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
       reason = 'parse-error';
     }
     if (parsed !== undefined) {
-      state = normalizeState(parsed, { defaultWidgetId });
-      reason = persistedRecoveryReason(parsed, state);
-      dirty = JSON.stringify(parsed) !== JSON.stringify(state);
+      if (isRecord(parsed) && Number.isSafeInteger(parsed.version) && parsed.version > STATE_VERSION) {
+        readOnly = true;
+        dirty = false;
+        recovery = { status: 'read-only', reason: 'unsupported-version' };
+      } else {
+        state = normalizeState(parsed, { defaultWidgetId });
+        reason = persistedRecoveryReason(parsed, state);
+        dirty = JSON.stringify(parsed) !== JSON.stringify(state);
+      }
     }
     if (reason) {
       const timestamp = new Date().toISOString().replace(/[^0-9TZ]/g, '-');
@@ -187,6 +237,7 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   async function flush() {
     if (timer !== null) clearTimeout(timer);
     timer = null;
+    if (readOnly) return;
     if (!dirty) return;
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     const temporaryPath = `${statePath}.tmp`;
@@ -212,12 +263,20 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   }
 
   function update(mutator) {
+    if (readOnly) throw new Error('Unsupported state version: read-only recovery');
     if (typeof mutator !== 'function') throw new TypeError('mutator must be a function');
     if (state.revision === Number.MAX_SAFE_INTEGER) throw new RangeError('State revision is exhausted');
     const draft = snapshot();
     mutator(draft);
     draft.version = STATE_VERSION;
     draft.revision = state.revision + 1;
+    if (!validScene(draft.scene, STATE_VERSION)) {
+      const ids = Array.isArray(draft.scene?.pages) ? draft.scene.pages.map(page => page?.id) : [];
+      if (new Set(ids).size !== ids.length) throw new TypeError('Duplicate page ID');
+      throw new TypeError('Invalid scene');
+    }
+    if (!settingsAreLossless(draft.scene, STATE_VERSION)) throw new TypeError('Invalid page settings');
+    if (!draft.scene.pages.some(page => page.id === draft.scene.activePageId)) throw new TypeError('Invalid active page ID');
     state = normalizeState(draft, { defaultWidgetId });
     dirty = true;
     scheduleWrite();
@@ -225,16 +284,18 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   }
 
   function mergeLegacySettings(settings) {
+    if (readOnly) throw new Error('Unsupported state version: read-only recovery');
     if (state.legacySettingsMigrated) return false;
     update(draft => {
-      const region = draft.scene.pages[0].regions[0];
+      const page = draft.scene.pages[0];
+      const region = page.regions[0];
       const legacy = normalizeWidgetSettings(settings);
       for (const [widgetId, saved] of Object.entries(legacy)) {
-        draft.widgetSettings[widgetId] = { ...saved, ...draft.widgetSettings[widgetId] };
+        page.widgetSettings[widgetId] = { ...saved, ...page.widgetSettings[widgetId] };
       }
-      region.settings = { ...draft.widgetSettings[region.widgetId], ...region.settings };
+      region.settings = { ...page.widgetSettings[region.widgetId], ...region.settings };
       if (region.widgetId && !UNSAFE_KEYS.has(region.widgetId)) {
-        draft.widgetSettings[region.widgetId] = { ...region.settings };
+        page.widgetSettings[region.widgetId] = { ...region.settings };
       }
       draft.legacySettingsMigrated = true;
     });

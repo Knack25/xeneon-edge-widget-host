@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const fs = require('node:fs');
 const { BrowserWindow } = require('electron');
 const { enterEdgePresentation } = require('./presentation');
 
@@ -32,13 +33,22 @@ function protectNavigation(window, url) {
   });
 }
 
-function load(window, url, present, onLoadError = error => console.error(error)) {
+function load(window, url, present, onLoadError = error => console.error(error), initialize = async () => {}) {
   protectNavigation(window, url);
   // Main-process-only contract: activation may show/focus this window after
   // true. False releases pending activations when loading fails or it closes.
   let settleReady;
   window.presentationReady = new Promise(resolve => { settleReady = resolve; });
   window.once('closed', () => settleReady(false));
+  let initialized = Promise.resolve(true);
+  window.webContents.on('did-finish-load', () => {
+    // Reload creates fresh isolated worlds and must reinstall their controls.
+    initialized = Promise.resolve().then(initialize).then(() => true, error => {
+      settleReady(false);
+      if (!window.isDestroyed()) onLoadError(error, window);
+      return false;
+    });
+  });
   let ready = false, loaded = false, shown = false;
   const show = () => {
     if (!ready || !loaded || shown || window.isDestroyed()) return;
@@ -51,7 +61,9 @@ function load(window, url, present, onLoadError = error => console.error(error))
   // Deferral lets the coordinator install its window ownership before callbacks.
   Promise.resolve().then(() => {
     if (!window.isDestroyed()) return window.loadURL(url);
-  }).then(() => {
+  }).then(async () => {
+    if (window.isDestroyed()) return;
+    if (!await initialized) return;
     loaded = true;
     show();
   }).catch(error => {
@@ -78,7 +90,10 @@ function createEdgeWindow({ display, baseUrl, onLoadError }) {
     webPreferences: preferences('preload-edge.js') });
   return load(window, url, () => {
     enterEdgePresentation(window, display.bounds, process.platform);
-  }, onLoadError);
+  }, onLoadError, () => window.webContents.executeJavaScriptInIsolatedWorld(1001,
+    ['page-navigation.js', 'edge-navigation.js'].map(file => ({
+      code: fs.readFileSync(path.join(__dirname, file), 'utf8')
+    }))));
 }
 
 module.exports = { createControllerWindow, createEdgeWindow };

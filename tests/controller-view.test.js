@@ -7,7 +7,7 @@ const { buildControllerViewModel } = require('../controller-view');
 const { getSettingDefinitions, getDefaultWidgetSettings } = require('../widget-settings');
 const { createController, migrateLegacySettings } = require('../controller');
 function snapshot(status = 'active', id = 'com.meloyellowjr.spectrumanalyzer') {
-  return { revision: 1, widgets: [{ id, source: 'bundled', iconUrl: '/widgets/icon.svg', manifest: { id, name: '<img onerror=alert(1)>', author: 'Artist', version: '1' } }], displays: [{ id: 8, label: 'Edge', bounds: { width: 2560, height: 720 } }], state: { displayPreference: { mode: 'automatic' }, scene: { visible: true, pages: [{ regions: [{ widgetId: id, settings: {} }] }] } }, edge: { status, displayId: 8, widgetId: id, loadStatus: 'loaded', error: null, retainedWidgetId: null } };
+  return { revision: 1, widgets: [{ id, source: 'bundled', iconUrl: '/widgets/icon.svg', manifest: { id, name: '<img onerror=alert(1)>', author: 'Artist', version: '1' } }], displays: [{ id: 8, label: 'Edge', bounds: { width: 2560, height: 720 } }], state: { displayPreference: { mode: 'automatic' }, scene: { visible: true, activePageId: 'first', navigationPosition: 'bottom-right', pages: [{ id: 'first', name: 'First', regions: [{ widgetId: id, settings: {} }] }] } }, edge: { status, displayId: 8, widgetId: id, loadStatus: 'loaded', error: null, retainedWidgetId: null, requestedPageId: 'first', presentedPageId: 'first' } };
 }
 test('view model preserves manifest text and never substitutes a missing active widget', () => {
   const data = snapshot();
@@ -17,6 +17,35 @@ test('view model preserves manifest text and never substitutes a missing active 
   data.state.scene.pages[0].regions[0].widgetId = 'missing'; data.edge.widgetId = 'missing';
   assert.equal(buildControllerViewModel(data).activeWidget, null);
   assert.equal(buildControllerViewModel(data).activeWidgetId, 'missing');
+});
+test('view model selects settings by active page ID and exposes page limits and presented page', () => {
+  const data = snapshot();
+  const first = data.state.scene.pages[0];
+  Object.assign(first, { id: 'first', name: 'First', regions: [{ widgetId: 'shared', settings: { gain: 10 } }] });
+  data.state.scene.pages.push({ id: 'second', name: 'Second', regions: [{ widgetId: 'shared', settings: { gain: 90 } }] });
+  data.state.scene.activePageId = 'second'; data.state.scene.navigationPosition = 'top-center';
+  data.edge.presentedPageId = 'first'; data.edge.requestedPageId = 'second'; data.edge.loadStatus = 'failed';
+  data.widgets[0].id = 'shared';
+  const model = buildControllerViewModel(data);
+  assert.equal(model.activePageId, 'second');
+  assert.deepEqual(model.settings, { gain: 90 });
+  assert.equal(model.navigationPosition, 'top-center');
+  assert.equal(model.presentedPageId, 'first');
+  assert.equal(model.pages[1].active, true);
+  assert.match(model.edge.message, /Second/);
+  assert.match(model.edge.message, /First/);
+  assert.equal(model.canDeletePage, true);
+  data.state.scene.pages = Array.from({ length: 12 }, (_, index) => ({ id: `p${index}`, name: `Page ${index}`, regions: [{ widgetId: 'shared', settings: {} }] }));
+  assert.equal(buildControllerViewModel(data).canAddPage, false);
+});
+test('failed requested page with no presented page is explicit in controller status', () => {
+  const data = snapshot();
+  data.state.scene.pages[0].name = 'Retry sketch';
+  data.edge.presentedPageId = null;
+  data.edge.loadStatus = 'failed';
+  const message = buildControllerViewModel(data).edge.message;
+  assert.match(message, /Requested Retry sketch/);
+  assert.match(message, /no page (is )?(currently )?shown/i);
 });
 test('edge topology and load failure are both visible including retained content', () => {
   assert.equal(buildControllerViewModel(snapshot('disconnected')).edge.message, 'Edge disconnected');
@@ -86,7 +115,7 @@ test('range sends every input and snapshots preserve focused settings nodes and 
   assert.equal(settings.children.find(row => row.children[1]?.dataset.setting === 'inputGain').children[1], range);
   assert.equal(range.value, '125');
   assert.equal(fixture.elements.get('search').value, 'spect');
-  assert.deepEqual(fixture.calls, [['setting', 'inputGain', 120], ['setting', 'inputGain', 125]]);
+  assert.deepEqual(fixture.calls, [['setting', { pageId: 'first', widgetId: 'com.meloyellowjr.spectrumanalyzer', name: 'inputGain', value: 120 }], ['setting', { pageId: 'first', widgetId: 'com.meloyellowjr.spectrumanalyzer', name: 'inputGain', value: 125 }]]);
 });
 test('display IDs stay numeric and ambiguity disables Show without disabling picker', async () => {
   const fixture = setup(); await fixture.controller.start(); fixture.receive(snapshot('ambiguous'));
