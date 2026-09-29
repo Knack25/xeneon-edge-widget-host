@@ -55,6 +55,112 @@ function fixture(options = {}) {
   const runtime = createWidgetRuntime({ document, fetchText: async () => '<html><head></head><body>Widget</body></html>', report: value => reports.push(value), ...options });
   return { runtime, frames, region, reports, document, live: () => region.children.find(frame => frame.dataset.live === 'true'), async load(widget = clock, revision = 1, settings = {}) { const result = runtime.load({ widget, revision, settings }); await settle(); frames.at(-1).finish(); return result; } };
 }
+test('Doodle frame receives its stable page ID without changing other widget identities', async () => {
+  const a = fixture({ pageId: 'page-a' });
+  await a.load(doodle);
+  assert.equal(a.live().contentWindow.icuePageId, 'page-a');
+  assert.equal(a.live().contentWindow.uniqueId, doodle.id);
+  const b = fixture({ pageId: 'page-b' });
+  await b.load(doodle);
+  assert.equal(b.live().contentWindow.icuePageId, 'page-b');
+  const other = fixture({ pageId: 'page-c' });
+  await other.load(clock);
+  assert.equal(other.live().contentWindow.icuePageId, undefined);
+  assert.equal(other.live().contentWindow.uniqueId, clock.id);
+});
+
+test('Edge forwards scene page identity through its real widget runtime factory', async () => {
+  const f = fixture();
+  let runtime;
+  const edge = createEdge({ document: f.document,
+    bridge: { onScene: () => () => {}, getScene: async () => null },
+    sceneRuntimeFactory: ({ createRuntime }) => {
+      runtime = createRuntime({ container: f.region, pageId: 'edge-page', report: () => {} });
+      return { receive() {}, destroy() { runtime.destroy(); } };
+    }, fetchText: async () => '<html><head></head><body>Doodle</body></html>' });
+  await edge.start();
+  const loading = runtime.load({ widget: doodle, settings: {}, revision: 1 });
+  await settle(); f.frames.at(-1).finish(); await loading;
+  assert.equal(f.frames.at(-1).contentWindow.icuePageId, 'edge-page');
+  edge.dispose();
+});
+
+test('Doodle migrates the legacy drawing once and restores separate page canvases', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const entries = new Map([[doodle.id, JSON.stringify({ canvasData: 'legacy-drawing', canvasWidth: 20, canvasHeight: 20 })]]);
+  const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  function page(pageId) {
+    const drawn = [];
+    const context = { window: null, addEventListener() {}, localStorage: storage, Image: class { set src(value) { this.source = value; this.onload(); } },
+      canvas: { width: 20, height: 20 }, ctx: { clearRect() {}, drawImage(image) { drawn.push(image.source); } },
+      normalizeHistoryStack: () => [], updateUndoRedoButtons() {}, normalizeToolState: () => ({ currentColorIndex: 0, currentBrushSize: 2, isEraser: false, toolbarVisible: true }),
+      applyToolSelectionUI() {}, console, setTimeout, clearTimeout };
+    context.window = context;
+    vm.createContext(context);
+    vm.runInContext(buildShimScript(doodle, {}, pageId), context);
+    vm.runInContext(code, context);
+    return { context, read: () => vm.runInContext('readStoredState()', context),
+      write: data => { context.dataToSave = data; return vm.runInContext('writeStoredState(dataToSave)', context); },
+      load: () => vm.runInContext('loadFromStorage()', context), drawn };
+  }
+  const first = page('page-a');
+  first.load();
+  assert.deepEqual(first.drawn, ['legacy-drawing']);
+  assert.equal(first.read().canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
+  assert.equal(JSON.parse(entries.get(doodle.id + ':page:page-a')).canvasData, 'legacy-drawing');
+  const second = page('page-b');
+  second.load();
+  assert.deepEqual(second.drawn, []);
+  assert.equal(second.write({ canvasData: 'second-drawing' }), true);
+  assert.equal(first.write({ canvasData: 'first-drawing' }), true);
+  const reopenedFirst = page('page-a'); reopenedFirst.load();
+  const reopenedSecond = page('page-b'); reopenedSecond.load();
+  assert.deepEqual(reopenedFirst.drawn, ['first-drawing']);
+  assert.deepEqual(reopenedSecond.drawn, ['second-drawing']);
+  assert.equal(JSON.parse(entries.get(doodle.id)).canvasData, 'legacy-drawing');
+});
+
+test('Doodle retains legacy bytes when a migration storage write fails and retries for the claimant', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const original = JSON.stringify({ canvasData: 'legacy-drawing' });
+  const entries = new Map([[doodle.id, original]]);
+  let blockedKey = doodle.id + ':page:page-a';
+  const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => { if (key === blockedKey) throw Error('quota'); entries.set(key, value); } };
+  function read(pageId) {
+    const context = { window: null, addEventListener() {}, localStorage: storage, console };
+    context.window = context; vm.createContext(context);
+    vm.runInContext(buildShimScript(doodle, {}, pageId), context);
+    vm.runInContext(code, context);
+    return vm.runInContext('readStoredState()', context);
+  }
+  assert.equal(read('page-a').canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id), original);
+  assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
+  assert.equal(read('page-b'), null);
+  blockedKey = null;
+  assert.equal(read('page-a').canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id + ':page:page-a'), original);
+});
+
+test('Doodle keeps the shared drawing readable when the ownership marker cannot be saved', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const code = html.slice(html.indexOf('    // --- Persistence ---'), html.indexOf('    // --- Toolbar ---'));
+  const original = JSON.stringify({ canvasData: 'legacy-drawing' });
+  const entries = new Map([[doodle.id, original]]);
+  const context = { window: null, addEventListener() {}, console,
+    localStorage: { getItem: key => entries.get(key) ?? null, setItem: (key, value) => {
+      if (key === doodle.id + ':legacy-page') throw Error('quota'); entries.set(key, value);
+    } } };
+  context.window = context; vm.createContext(context);
+  vm.runInContext(buildShimScript(doodle, {}, 'page-a'), context);
+  vm.runInContext(code, context);
+  assert.equal(vm.runInContext('readStoredState()', context).canvasData, 'legacy-drawing');
+  assert.equal(entries.get(doodle.id), original);
+  assert.equal(entries.has(doodle.id + ':page:page-a'), false);
+});
 test('successful staging promotes one frame and settings notify its initialized shim', async () => {
   const f = fixture(); assert.deepEqual(await f.load(), { stale: false, ok: true }); const frame = f.live(); let updates = 0;
   frame.contentWindow.icueEvents.onDataUpdated = () => updates++;

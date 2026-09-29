@@ -7,13 +7,15 @@
     const value = manifest && typeof manifest === 'object' ? manifest : {};
     return { id: value.id || folder.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: value.name || folder, description: value.description || 'No description provided.', version: value.version || 'unknown', author: value.author || 'unknown', preview_icon: value.preview_icon || '', os: Array.isArray(value.os) ? value.os : [], interactive: !!value.interactive, required_plugins: Array.isArray(value.required_plugins) ? value.required_plugins : [], supported_devices: Array.isArray(value.supported_devices) ? value.supported_devices : [] };
   }
-  function propertiesFor(widget, settings) {
+  function propertiesFor(widget, settings, pageId) {
     const manifest = normalizeManifest(widget.manifest, widget.folder);
-    return { ...settingsApi.getDefaultWidgetSettings(widget), ...settings, widgetId: widget.id || manifest.id, widgetName: manifest.name, uniqueId: widget.id || widget.uid || manifest.id };
+    const properties = { ...settingsApi.getDefaultWidgetSettings(widget), ...settings, widgetId: widget.id || manifest.id, widgetName: manifest.name, uniqueId: widget.id || widget.uid || manifest.id };
+    if (widget.id === 'com.corsair.widget.doodle-pad' && pageId) properties.icuePageId = pageId;
+    return properties;
   }
-  function buildShimScript(widget, settings = {}) {
+  function buildShimScript(widget, settings = {}, pageId) {
     return `(() => {
-      const props = ${jsonForScript(propertiesFor(widget, settings))};
+      const props = ${jsonForScript(propertiesFor(widget, settings, pageId))};
       Object.assign(window, props);
       window.iCUE = Object.assign({ iCUELanguage: 'en', ipRegistryApiKey: '' }, window.iCUE || {});
       window.tr = window.tr || (value => Promise.resolve(String(value)));
@@ -42,17 +44,17 @@
       window.addEventListener('unhandledrejection', event => recordFailure(event.reason && event.reason.message || event.reason || 'Widget promise failed.'));
     })();`;
   }
-  function buildWidgetShell(widget, indexText, settings = {}, baseURI = root.location?.href) {
+  function buildWidgetShell(widget, indexText, settings = {}, baseURI = root.location?.href, pageId) {
     if (typeof indexText !== 'string') throw new TypeError('Widget entry must be HTML text.');
     const entryUrl = new URL(widget.entryUrl, baseURI);
     const baseUrl = widget.baseUrl ? new URL(widget.baseUrl, entryUrl) : new URL('.', entryUrl);
     if (!baseUrl.pathname.endsWith('/')) baseUrl.pathname += '/';
     const baseHref = baseUrl.href;
-    const injection = `<base href="${escapeHtml(baseHref)}">\n<script>${buildShimScript(widget, settings)}<\/script>`;
+    const injection = `<base href="${escapeHtml(baseHref)}">\n<script>${buildShimScript(widget, settings, pageId)}<\/script>`;
     if (/<head(\s[^>]*)?>/i.test(indexText)) return indexText.replace(/<head(\s[^>]*)?>/i, match => `${match}\n${injection}`);
     return `<!doctype html><html><head>${injection}</head><body>${indexText}</body></html>`;
   }
-  function createWidgetRuntime({ document, fetchText, container, report = () => {}, frameLoadTimeoutMs = 15000 }) {
+  function createWidgetRuntime({ document, fetchText, container, pageId, report = () => {}, frameLoadTimeoutMs = 15000 }) {
     const region = container || document.getElementById('primary-region');
     let current = null, live = null, destroyed = false;
     const stale = Object.freeze({ stale: true });
@@ -75,7 +77,7 @@
       const target = operation.frame.contentWindow;
       try {
         if (target.__ICUEWidgetRuntimeFailure) throw new Error(target.__ICUEWidgetRuntimeFailure);
-        const properties = propertiesFor(operation.widget, operation.settings);
+        const properties = propertiesFor(operation.widget, operation.settings, pageId);
         for (const name of operation.appliedNames || []) if (!Object.hasOwn(properties, name)) delete target[name];
         Object.assign(target, properties);
         operation.appliedNames = Object.keys(properties);
@@ -115,8 +117,8 @@
         frame.setAttribute('title', widget.manifest?.name || 'Widget'); frame.setAttribute('aria-hidden', 'true'); frame.style.visibility = 'hidden';
         const html = await Promise.race([Promise.resolve().then(() => fetchText(widget.entryUrl)), cancellation, operation.deadline]);
         if (!isCurrent(operation) || html === stale) { frame.remove(); return stale; }
-        const shell = buildWidgetShell(widget, html, operation.settings, document.baseURI);
-        operation.appliedNames = Object.keys(propertiesFor(widget, operation.settings));
+        const shell = buildWidgetShell(widget, html, operation.settings, document.baseURI, pageId);
+        operation.appliedNames = Object.keys(propertiesFor(widget, operation.settings, pageId));
         await Promise.race([waitForFrame(operation, shell), cancellation, operation.deadline]);
         if (!isCurrent(operation)) { frame.remove(); return stale; }
         while (await applySettings(operation) === stale) {

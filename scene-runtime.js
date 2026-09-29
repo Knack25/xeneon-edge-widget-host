@@ -72,7 +72,7 @@
         ready: false, failed: false, loading: null, loadSerial: 0,
         settingsKey: JSON.stringify(page.regions[0].settings), revision,
         failureReported: false, settingsUpdate: null };
-      entry.runtime = createRuntime({ container, report: result => {
+      entry.runtime = createRuntime({ container, pageId: page.id, report: result => {
         if (destroyed || entries.get(entry.pageId) !== entry) return;
         if (entry.loading && result.ok) return; // Success is reported only after visible promotion.
         if (!result.ok) {

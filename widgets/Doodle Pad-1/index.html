@@ -556,16 +556,34 @@ class MediaViewer {
     }
 
     // --- Persistence ---
-    // Widget Builder pattern:
-    // - use uniqueId as the localStorage key
-    // - store/retrieve a JSON object under that key
+    // iCUE keeps its original uniqueId key. The Edge host supplies a page ID
+    // so separate Doodle pages have separate saved canvases.
     const widgetId = uniqueId;
+    const pageId = typeof icuePageId === 'string' && icuePageId ? icuePageId : null;
+    const storageKey = pageId ? widgetId + ':page:' + pageId : widgetId;
+    const legacyOwnerKey = widgetId + ':legacy-page';
+
+    function storedRaw() {
+      const scoped = localStorage.getItem(storageKey);
+      if (scoped !== null || !pageId) return scoped;
+      const legacy = localStorage.getItem(widgetId);
+      if (legacy === null) return null;
+      const owner = localStorage.getItem(legacyOwnerKey);
+      if (owner && owner !== pageId) return null;
+      if (!owner) {
+        try { localStorage.setItem(legacyOwnerKey, pageId); }
+        catch (e) { return legacy; }
+      }
+      try { localStorage.setItem(storageKey, legacy); }
+      catch (e) { /* Keep the original for this page's next load. */ }
+      return legacy;
+    }
 
     function readStoredState(options) {
       const opts = options || {};
       const requireCanvasData = opts.requireCanvasData !== false;
       try {
-        const raw = localStorage.getItem(widgetId);
+        const raw = storedRaw();
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object') return null;
@@ -581,7 +599,7 @@ class MediaViewer {
         const payload = JSON.stringify(payloadObj);
         let wroteAny = false;
         try {
-          localStorage.setItem(widgetId, payload);
+          localStorage.setItem(storageKey, payload);
           wroteAny = true;
         } catch (e) {}
         return wroteAny;

@@ -16,8 +16,8 @@ function fixture() {
     containers.push(node); return node;
   } };
   const runtimes = [], reports = [], presentations = [];
-  const manager = createSceneRuntime({ document, report: value => reports.push(value), onPresentation: value => presentations.push(value), createRuntime({ container, report }) {
-    const runtime = { container, reports: report, loads: [], updates: [], destroyed: 0, load(input) {
+  const manager = createSceneRuntime({ document, report: value => reports.push(value), onPresentation: value => presentations.push(value), createRuntime({ container, report, pageId }) {
+    const runtime = { container, pageId, reports: report, loads: [], updates: [], destroyed: 0, load(input) {
       const gate = deferred(); this.loads.push({ input, gate });
       return gate.promise.then(result => { if (result.stale) return result; if (result.ok) report({ revision: input.revision, ok: true }); else report({ revision: input.revision, ok: false, message: result.message }); return result; });
     }, updateSettings(input) { this.updates.push(input); report({ revision: input.revision, ok: true }); return Promise.resolve({ stale: false }); }, destroy() { this.destroyed++; container.remove(); } };
@@ -66,6 +66,15 @@ test('visiting A to B to A retains exact runtimes and full-size offscreen contai
   assert.equal(f.runtimes[1].container.getAttribute('aria-hidden'), 'true');
   assert.deepEqual(f.presentations, [{ pageId: 'A' }, { pageId: 'B' }, { pageId: 'A' }]);
   assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 3, ok: true });
+});
+test('scene runtime gives each visited page identity to its widget runtime', async () => {
+  const f = fixture();
+  let loading = f.manager.receive(snapshot(1, 'B'));
+  assert.equal(f.runtimes[0].pageId, 'B');
+  finish(f.runtimes[0]); await loading;
+  loading = f.manager.receive(snapshot(2, 'A'));
+  assert.equal(f.runtimes[1].pageId, 'A');
+  finish(f.runtimes[1]); await loading;
 });
 
 test('rename, reorder and navigation placement preserve runtimes; settings target only matching page', async () => {

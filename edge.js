@@ -5,7 +5,7 @@
   function createEdge({ document, bridge, sceneRuntime, sceneRuntimeFactory = sceneApi.createSceneRuntime, fetchText }) {
     const fetchWidget = fetchText || (async url => { const response = await root.fetch(url, { cache: 'no-store' }); if (!response.ok) throw new Error(`Failed to fetch widget: ${response.status}`); return response.text(); });
     sceneRuntime ||= sceneRuntimeFactory({ document,
-      createRuntime: ({ container, report }) => runtimeApi.createWidgetRuntime({ document, container, fetchText: fetchWidget, report }),
+      createRuntime: ({ container, pageId, report }) => runtimeApi.createWidgetRuntime({ document, container, pageId, fetchText: fetchWidget, report }),
       report: result => bridge.reportLoadResult(result) });
     let last = null, unsubscribe, disposed = false;
     function receive(snapshot) {
