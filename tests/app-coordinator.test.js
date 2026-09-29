@@ -8,6 +8,8 @@ const { EventEmitter } = require('node:events');
 const { createStateStore } = require('../app-state');
 const { createWidgetLibrary } = require('../widget-library');
 const { createAppCoordinator } = require('../app-coordinator');
+const { buildControllerViewModel } = require('../controller-view');
+const { migrateLegacySettings } = require('../controller');
 
 const laptop = { id: 1, label: 'Mac', internal: true, scaleFactor: 2,
   bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 25, width: 1440, height: 875 } };
@@ -44,6 +46,7 @@ function fixture(t, options = {}) {
   writeWidget(bundledRoot, 'clock', 'clock');
   writeWidget(bundledRoot, 'other', 'other');
   const widgetLibrary = createWidgetLibrary({ bundledRoot, managedRoot: path.join(temp, 'managed') });
+  if (options.persisted !== undefined) fs.writeFileSync(path.join(temp, 'state.json'), options.persisted);
   const stateStore = createStateStore({ statePath: path.join(temp, 'state.json'), defaultWidgetId: 'clock', writeDelayMs: 10000 });
   if (options.prepare) options.prepare(stateStore);
   const screen = new EventEmitter();
@@ -125,10 +128,51 @@ test('migration merges inactive settings once and startup synchronizes the activ
   const r = fixture(t, { prepare: store => store.update(state => { state.scene.pages[0].regions[0].settings = { gain: 7 }; }) });
   await r.coordinator.start();
   assert.deepEqual(r.coordinator.snapshot().state.widgetSettings.clock, { gain: 7 });
-  assert.equal(r.coordinator.mergeLegacySettings({ clock: { gain: 3, color: 'blue' }, other: { speed: 5 } }), true);
-  assert.equal(r.coordinator.mergeLegacySettings({ clock: { gain: 9 } }), false);
+  assert.equal(await r.coordinator.mergeLegacySettings({ clock: { gain: 3, color: 'blue' }, other: { speed: 5 } }), true);
+  assert.equal(await r.coordinator.mergeLegacySettings({ clock: { gain: 9 } }), false);
   r.coordinator.selectWidget('other'); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { speed: 5 });
   r.coordinator.selectWidget('clock'); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { gain: 7, color: 'blue' });
+});
+
+test('recovered persisted bytes produce a visible controller notice through the real coordinator', async t => {
+  for (const bytes of ['{bad', '{"version":99,"widgetSettings":{"clock":{"gain":145}}}']) {
+    const r = fixture(t, { persisted: bytes }); await r.coordinator.start();
+    assert.match(buildControllerViewModel(r.coordinator.snapshot()).edge.message, /State recovered from invalid persisted data/);
+    assert.doesNotMatch(JSON.stringify(r.coordinator.snapshot().recovery), /app-coordinator-|state.json/);
+    const backup = fs.readdirSync(r.temp).find(name => name.startsWith('state.json.corrupt-'));
+    assert.equal(fs.readFileSync(path.join(r.temp, backup), 'utf8'), bytes);
+  }
+});
+
+test('migration keeps localStorage on durable write failure and retries the already merged state before acknowledgement', async t => {
+  const r = fixture(t); await r.coordinator.start(); r.coordinator.updateSetting('gain', 7); await r.stateStore.flush();
+  const bytes = '{"clock":{"gain":3,"color":"blue"},"other":{"speed":5,"nested":{"list":[1,true,null]}}}';
+  const storage = { value: bytes, getItem() { return this.value; }, removeItem() { this.value = null; } };
+  const bridge = { submitLegacySettings: data => r.coordinator.mergeLegacySettings(data) };
+  // An actual non-writable destination for the atomic rename, with the durable original retained.
+  const statePath = path.join(r.temp, 'state.json'); const original = fs.readFileSync(statePath);
+  fs.renameSync(statePath, `${statePath}.saved`); fs.mkdirSync(statePath);
+  await assert.rejects(migrateLegacySettings(storage, bridge));
+  assert.equal(storage.value, bytes); assert.equal(r.stateStore.snapshot().legacySettingsMigrated, true);
+  fs.rmdirSync(statePath); fs.writeFileSync(statePath, original);
+  await migrateLegacySettings(storage, bridge); assert.equal(storage.value, null);
+  const reloaded = createStateStore({ statePath, defaultWidgetId: 'clock' });
+  assert.equal(reloaded.snapshot().legacySettingsMigrated, true);
+  assert.deepEqual(reloaded.snapshot().widgetSettings, { clock: { gain: 7, color: 'blue' }, other: { speed: 5, nested: { list: [1, true, null] } } });
+  await reloaded.flush();
+});
+
+test('hidden manual targets remain selected independently of the Edge window and still require unique saved matches', async t => {
+  const duplicate = { ...edge, id: 3 };
+  const r = fixture(t, { displays: [laptop, edge, duplicate] }); await r.coordinator.start();
+  r.coordinator.selectDisplay(2); r.coordinator.setEdgeVisible(false);
+  assert.equal(r.coordinator.snapshot().edge.displayId, null);
+  assert.equal(buildControllerViewModel(r.coordinator.snapshot()).displayValue, 2);
+  r.coordinator.selectDisplay(3); assert.equal(buildControllerViewModel(r.coordinator.snapshot()).displayValue, 3);
+  r.topology([laptop, edge], 'display-removed'); assert.equal(buildControllerViewModel(r.coordinator.snapshot()).displayValue, 2);
+  r.topology([laptop, edge, duplicate]); assert.equal(buildControllerViewModel(r.coordinator.snapshot()).displayValue, '');
+  assert.equal(r.edges.length, 1); r.coordinator.selectDisplay(3); r.coordinator.setEdgeVisible(true);
+  assert.equal(r.coordinator.snapshot().edge.displayId, 3);
 });
 
 test('invalid commands fail closed without changing revision', async t => {

@@ -66,6 +66,7 @@
     function cancel(operation) {
       if (!operation) return;
       operation.cancel();
+      clearTimeout(operation.deadlineTimer);
       operation.stopWaiting?.();
       if (operation.frame && operation.frame !== live) operation.frame.remove();
     }
@@ -78,24 +79,22 @@
         for (const name of operation.appliedNames || []) if (!Object.hasOwn(properties, name)) delete target[name];
         Object.assign(target, properties);
         operation.appliedNames = Object.keys(properties);
-        if (typeof target.icueEvents?.onDataUpdated === 'function') await Promise.race([Promise.resolve(target.icueEvents.onDataUpdated()), operation.cancellation]);
+        if (typeof target.icueEvents?.onDataUpdated === 'function') await Promise.race([Promise.resolve(target.icueEvents.onDataUpdated()), operation.cancellation, ...(operation.status === 'loading' ? [operation.deadline] : [])]);
         if (!isCurrent(operation) || revision !== operation.revision) return stale;
         if (target.__ICUEWidgetRuntimeFailure) throw new Error(target.__ICUEWidgetRuntimeFailure);
       } catch (error) {
-        if (!isCurrent(operation) || revision !== operation.revision) return stale;
+        if (!isCurrent(operation) || (revision !== operation.revision && !operation.timedOut)) return stale;
         throw error;
       }
     }
     function waitForFrame(operation, shell) {
       const frame = operation.frame;
       return new Promise((resolve, reject) => {
-        let timer;
-        const cleanup = () => { clearTimeout(timer); frame.removeEventListener('load', loaded); frame.removeEventListener('error', failed); operation.stopWaiting = null; };
+        const cleanup = () => { frame.removeEventListener('load', loaded); frame.removeEventListener('error', failed); operation.stopWaiting = null; };
         const loaded = () => { cleanup(); resolve(); };
         const failed = () => { cleanup(); reject(new Error('Widget frame failed to load.')); };
         operation.stopWaiting = () => { cleanup(); resolve(stale); };
         frame.addEventListener('load', loaded); frame.addEventListener('error', failed);
-        timer = setTimeout(() => { cleanup(); reject(new Error('Widget frame load timed out.')); }, frameLoadTimeoutMs);
         try { frame.srcdoc = shell; region.append(frame); } catch (error) { cleanup(); reject(error); }
       });
     }
@@ -106,21 +105,25 @@
       const cancellation = new Promise(resolve => { cancelLoad = () => resolve(stale); });
       const operation = { widget, settings: { ...settings }, revision, frame: null, status: 'loading', cancel: cancelLoad, cancellation };
       current = operation;
+      operation.deadline = new Promise((_, reject) => {
+        operation.deadlineTimer = setTimeout(() => { operation.timedOut = true; reject(new Error('Widget preparation timed out.')); }, frameLoadTimeoutMs);
+      });
       try {
         if (!widget) throw new Error('Selected widget is missing from the catalog.');
         const frame = document.createElement('iframe'); operation.frame = frame;
         frame.dataset.widgetId = widget.id || widget.manifest?.id; frame.dataset.live = 'false';
         frame.setAttribute('title', widget.manifest?.name || 'Widget'); frame.setAttribute('aria-hidden', 'true'); frame.style.visibility = 'hidden';
-        const html = await Promise.race([Promise.resolve().then(() => fetchText(widget.entryUrl)), cancellation]);
+        const html = await Promise.race([Promise.resolve().then(() => fetchText(widget.entryUrl)), cancellation, operation.deadline]);
         if (!isCurrent(operation) || html === stale) { frame.remove(); return stale; }
         const shell = buildWidgetShell(widget, html, operation.settings, document.baseURI);
         operation.appliedNames = Object.keys(propertiesFor(widget, operation.settings));
-        await Promise.race([waitForFrame(operation, shell), cancellation]);
+        await Promise.race([waitForFrame(operation, shell), cancellation, operation.deadline]);
         if (!isCurrent(operation)) { frame.remove(); return stale; }
         while (await applySettings(operation) === stale) {
           if (!isCurrent(operation)) { frame.remove(); return stale; }
         }
         if (!isCurrent(operation)) { frame.remove(); return stale; }
+        clearTimeout(operation.deadlineTimer);
         frame.contentWindow.__ICUEWidgetRuntimeNotify = message => {
           if (!isCurrent(operation)) return;
           operation.status = 'failed'; operation.error = message;
@@ -132,6 +135,7 @@
         operation.status = 'loaded'; await send(operation, true);
         return isCurrent(operation) ? { stale: false } : stale;
       } catch (error) {
+        clearTimeout(operation.deadlineTimer);
         operation.stopWaiting?.();
         if (operation.frame && operation.frame !== live) operation.frame.remove();
         if (!isCurrent(operation)) return stale;

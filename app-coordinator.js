@@ -60,6 +60,8 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   function snapshot() {
     const state = stateStore.snapshot();
     return clone({ revision: state.revision, state, widgets,
+      recovery: stateStore.recoveryDiagnostic?.() || null,
+      selectedTargetDisplayId: resolveTarget().display?.id ?? null,
       displays: screen.getAllDisplays().map(publicDisplay),
       edge: { ...edgeState, widgetId: regionOf(state).widgetId } });
   }
@@ -310,10 +312,13 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   function confirmImport(token) { validateToken(token); return importResult(widgetLibrary.confirmReplacement(token)); }
   function cancelImport(token) { validateToken(token); return clone(widgetLibrary.cancelReplacement(token)); }
 
-  function mergeLegacySettings(settings) {
+  async function mergeLegacySettings(settings) {
     assertRunning();
     const merged = stateStore.mergeLegacySettings(settings);
     if (merged) { synchronizeActiveSettings(); broadcast(); }
+    // A failed previous write may already have set the in-memory marker. The
+    // renderer may remove its durable source only after this retry also flushes.
+    await stateStore.flush();
     return merged;
   }
 

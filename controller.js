@@ -91,7 +91,7 @@
       const widget = model.activeWidget;
       el('widget-title').textContent = widget ? widget.name : model.activeWidgetId ? `Unavailable widget: ${model.activeWidgetId}` : 'Select a widget';
       const metadata = [];
-      if (widget) for (const [label, value] of [['Author', widget.author], ['Version', widget.version], ['Description', widget.description], ['Source', widget.source], ['OS', (widget.manifest.os || []).map(os => os.platform).join(', ') || 'Unspecified'], ['Supported devices', (widget.manifest.supported_devices || []).map(device => device.type).join(', ') || 'Unspecified'], ['Interactive', widget.manifest.interactive ? 'Yes' : 'No'], ['Required plugins', (widget.manifest.required_plugins || []).join(', ') || 'None']]) {
+      if (widget) for (const [label, value] of [['Author', widget.author], ['Version', widget.version], ['Description', widget.description], ['Source', widget.source], ['OS', (widget.manifest.os || []).map(os => os.platform).join(', ') || 'Unspecified'], ['Supported devices', (widget.manifest.supported_devices || []).map(device => device.type).join(', ') || 'Unspecified'], ['Interactive', widget.manifest.interactive === true ? 'Yes' : 'No'], ['Required plugins', (widget.manifest.required_plugins || []).join(', ') || 'None']]) {
         const row = node('div', undefined, 'metadata-row'); row.append(node('span', `${label}: `), node('strong', value)); metadata.push(row);
       }
       el('metadata').replaceChildren(...metadata); renderSettings();

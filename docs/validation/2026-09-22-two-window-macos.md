@@ -1,7 +1,7 @@
 # Two-window macOS validation
 
 Plan date and fixed filename: 2026-09-22. Execution date: 2026-09-29.
-Implementation baseline: `265ddd3`, isolated `feat/two-window-implementation`.
+Task 8 implementation baseline: `265ddd3`, isolated `feat/two-window-implementation`.
 Software verification is recorded below; physical acceptance remains incomplete.
 
 ## Environment and evidence
@@ -17,7 +17,7 @@ are recorded. Electron logical display information:
 
 Task 8's baseline smoke timestamp: 2026-09-29T15:17:58.844Z; PASS.
 Task 9 refreshed smoke timestamp: 2026-09-29T15:26:39.410Z; PASS.
-`npm test`: 111/111 passed, zero failures/cancellations/skips. `npm run test:smoke`:
+Task 9 `npm test`: 111/111 passed, zero failures/cancellations/skips. `npm run test:smoke`:
 PASS, zero renderer errors, application exit and closed port 8080. The commands
 ran after documentation changes with a fresh isolated smoke profile. Initial
 sandbox unit execution passed 109 cases and denied two loopback server binds
@@ -30,6 +30,21 @@ report records controller 1 / Edge 2 at startup, controller 3 reopening while
 Edge 2 stays alive, and Edge 4 after Hide/Show. Clock animation after controller
 destruction changed from rotate(247.92deg) to rotate(248.52deg) in the retained
 frame. Doodle background became rgb(18, 52, 86) in the same live widget frame.
+
+Final-review fix wave (source baseline `51ad89e`): `npm test` passed 124/124,
+zero failures/cancellations/skips. One refreshed real Electron smoke passed at
+2026-09-29T15:45:55.893Z on darwin arm64 / Electron 41.5.0 with zero renderer errors,
+application exit and closed port 8080. Both commands ran once after fix self-review
+with authorized loopback/native access and a fresh isolated smoke profile.
+Logs are `.superpowers/sdd/2026-09-22-two-window-controller/final-fix-unit.log`
+and `.superpowers/sdd/2026-09-22-two-window-controller/final-fix-smoke.log`.
+The refreshed smoke retained Edge 2 during controller recreation as controller 3;
+Clock animation changed from rotate(346.884deg) to rotate(347.484deg). Doodle
+background reached rgb(18, 52, 86) in the same widget frame; Hide/Show created Edge 4.
+The added regressions cover exact invalid-state backup bytes and visible transient
+recovery status, unique backup names and backup failure, durable legacy migration
+failure/retry/reload, oversized settings arrays, strict interactive metadata,
+the complete preparation deadline, and connected manual selection while hidden.
 
 The smoke launches production Electron windows and a production loopback server
 using a new ignored `artifacts/smoke-profile-*` userData directory. It never uses
@@ -85,6 +100,13 @@ Imports copy to `path.join(app.getPath('userData'), 'imports')`; state is
 runtime rather than guessing the macOS app folder. Use trusted widgets and an
 explicit same-ID replacement decision; bundled-ID replacements are managed
 overrides, and failed promotion rolls back the prior managed directory.
+
+Recovery backs up unsupported, invalid or materially lossy persisted state before
+rewriting it and shows a controller notice for that launch. Benign canonicalization
+does not trigger recovery. Legacy localStorage is retained until the destination
+flush succeeds, including retries after an in-memory merge. Ordinary setting writes
+remain debounced. Widget preparation has one 15-second deadline through fetch,
+navigation and initial asynchronous settings; timeout retains prior working content.
 
 Current scope is one page/one full-page widget. Page creation and Edge navigation
 follow first, then multi-widget layouts/editing. No merge or push is part of this

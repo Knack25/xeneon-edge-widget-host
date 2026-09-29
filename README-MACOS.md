@@ -44,6 +44,8 @@ Choose a widget in the controller list, then use its Settings controls. The Edge
 keeps its native window and fullscreen placement during selection. If a widget
 fails to prepare, the previous working content remains visible and the controller
 reports the error. Settings reach the active widget live.
+Preparation has a 15-second deadline covering fetch, frame navigation and initial
+asynchronous settings application; a timeout retains the previous widget.
 
 Closing the controller leaves the Edge and application-owned loopback server
 running. Clicking the Dock icon recreates or focuses the controller. **Hide Edge**
@@ -93,9 +95,17 @@ Versioned state saves the active widget, per-widget settings, scene visibility,
 display preference and controller bounds. Bounds restore only when sufficiently
 visible on a connected non-Edge display; otherwise the controller centers on a
 safe display. Writes are debounced and atomically renamed, with a quit flush.
-Malformed JSON is preserved as a dated `state.json.corrupt-*` backup; unsupported
-or invalid fields normalize to safe defaults. Legacy local-storage settings merge
-once.
+Malformed JSON, unsupported versions, invalid known schema fields, and settings
+that normalization would lose are preserved byte-for-byte in a unique dated
+`state.json.corrupt-*` backup before safe normalized state is written. The
+controller reports recovery for that launch. Formatting changes and ignored
+extra metadata do not trigger recovery. Backup failure leaves the original file
+untouched and stops initialization.
+
+Legacy local-storage settings merge once. Their migration acknowledgement waits
+for a successful state-file flush before localStorage is removed. A failed write
+retains the legacy entry, and retry flushes the already merged settings. Ordinary
+settings changes remain debounced.
 
 Use **Import widget folder** and choose a folder with a regular `index.html`.
 An optional valid `manifest.json` supplies its ID; otherwise the original folder

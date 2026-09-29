@@ -30,6 +30,7 @@ function normalizeSettings(value) {
     if (Object.getOwnPropertySymbols(item).length) throw new TypeError('Settings must use string keys');
     ancestors.add(item);
     const result = Array.isArray(item) ? [] : {};
+    if (Array.isArray(item) && item.length > 10000 - count) throw new TypeError('Settings exceed JSON limits');
     const keys = Array.isArray(item) ? Array.from({ length: item.length }, (_, index) => String(index)) : Object.keys(item);
     for (const key of keys) {
       if (UNSAFE_KEYS.has(key)) continue;
@@ -114,12 +115,39 @@ function normalizeState(raw, { defaultWidgetId } = {}) {
   return state;
 }
 
+// Only startup recovery classifies the persisted schema. Extra metadata and
+// formatting/key-order changes are benign; lost settings or invalid known
+// fields warrant retaining the original file before the first rewrite.
+function persistedRecoveryReason(raw, normalized) {
+  if (!isRecord(raw) || raw.version !== STATE_VERSION) return 'unsupported-state';
+  const validString = value => typeof value === 'string' && value.trim().length > 0;
+  const validBounds = value => isRecord(value) && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) && value.width > 0 && value.height > 0;
+  const preference = raw.displayPreference;
+  const fingerprint = preference?.fingerprint;
+  const validFingerprint = value => isRecord(value) && typeof value.label === 'string' && ['physicalWidth', 'physicalHeight'].every(key => Number.isFinite(value[key]) && value[key] > 0);
+  const page = raw.scene?.pages?.[0]; const region = page?.regions?.[0];
+  if (!Number.isSafeInteger(raw.revision) || raw.revision < 0 ||
+    (raw.legacySettingsMigrated !== undefined && typeof raw.legacySettingsMigrated !== 'boolean') ||
+    (raw.controllerBounds !== null && !validBounds(raw.controllerBounds)) ||
+    !isRecord(preference) || !['automatic', 'manual'].includes(preference.mode) ||
+    (fingerprint !== null && !validFingerprint(fingerprint)) || (preference.mode === 'manual' && !validFingerprint(fingerprint)) ||
+    !isRecord(raw.scene) || typeof raw.scene.visible !== 'boolean' || !Array.isArray(raw.scene.pages) || raw.scene.pages.length !== 1 ||
+    !isRecord(page) || !validString(page.id) || !validString(page.name) || raw.scene.activePageId !== page.id ||
+    !Array.isArray(page.regions) || page.regions.length !== 1 || !isRecord(region) || !validString(region.id) ||
+    !(region.widgetId === null || validString(region.widgetId)) || !isRecord(region.settings) ||
+    !isRecord(region.bounds) || Object.keys(FULL_PAGE_BOUNDS).some(key => region.bounds[key] !== FULL_PAGE_BOUNDS[key])) return 'invalid-state';
+  if ((raw.widgetSettings !== undefined && JSON.stringify(raw.widgetSettings) !== JSON.stringify(normalized.widgetSettings)) ||
+    JSON.stringify(region.settings) !== JSON.stringify(normalized.scene.pages[0].regions[0].settings)) return 'lossy-state';
+  return null;
+}
+
 function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {}) {
   if (typeof statePath !== 'string' || !statePath) throw new TypeError('statePath is required');
   if (!Number.isFinite(writeDelayMs) || writeDelayMs < 0) throw new TypeError('writeDelayMs must be nonnegative');
   let state = createDefaultState(defaultWidgetId);
   let dirty = true;
   let timer = null;
+  let recovery = null;
   let source;
   try {
     source = fs.readFileSync(statePath, 'utf8');
@@ -128,15 +156,27 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   }
   if (source !== undefined) {
     let parsed;
+    let reason = null;
     try {
       parsed = JSON.parse(source);
     } catch {
-      const timestamp = new Date().toISOString().replace(/[^0-9TZ]/g, '-');
-      fs.renameSync(statePath, `${statePath}.corrupt-${timestamp}`);
+      reason = 'parse-error';
     }
     if (parsed !== undefined) {
       state = normalizeState(parsed, { defaultWidgetId });
+      reason = persistedRecoveryReason(parsed, state);
       dirty = JSON.stringify(parsed) !== JSON.stringify(state);
+    }
+    if (reason) {
+      const timestamp = new Date().toISOString().replace(/[^0-9TZ]/g, '-');
+      let suffix = 0;
+      for (;;) {
+        const backupPath = `${statePath}.corrupt-${timestamp}${suffix ? `-${suffix}` : ''}`;
+        try { fs.copyFileSync(statePath, backupPath, fs.constants.COPYFILE_EXCL); break; }
+        catch (error) { if (error.code !== 'EEXIST') throw error; suffix++; }
+      }
+      recovery = { status: 'recovered', reason };
+      dirty = true;
     }
   }
 
@@ -202,7 +242,7 @@ function createStateStore({ statePath, defaultWidgetId, writeDelayMs = 100 } = {
   }
 
   if (dirty) scheduleWrite();
-  return { snapshot, update, mergeLegacySettings, flush };
+  return { snapshot, update, mergeLegacySettings, flush, recoveryDiagnostic: () => recovery && { ...recovery } };
 }
 
 module.exports = { STATE_VERSION, createDefaultState, normalizeState, createStateStore };

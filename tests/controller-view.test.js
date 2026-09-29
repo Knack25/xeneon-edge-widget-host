@@ -133,3 +133,27 @@ test('optional malformed manifest metadata cannot break the controller', async (
   assert.doesNotThrow(() => fixture.receive(data));
   assert.equal(fixture.elements.get('rescan').disabled, false);
 });
+
+test('interactive metadata displays Yes only for the boolean true', async () => {
+  const f = setup(); await f.controller.start();
+  for (const [value, expected] of [['false', 'No'], [1, 'No'], [false, 'No'], [true, 'Yes']]) {
+    const data = snapshot(); data.widgets[0].manifest.interactive = value; f.receive(data);
+    assert.equal(f.elements.get('metadata').children.find(row => row.children[0].textContent === 'Interactive: ').children[1].textContent, expected);
+  }
+});
+
+test('controller visibly reports recovered state independently of Edge status without a filesystem path', async () => {
+  const f = setup(); await f.controller.start();
+  const data = snapshot('hidden'); data.recovery = { status: 'recovered', reason: 'invalid-state' }; f.receive(data);
+  assert.match(f.elements.get('status').textContent, /State recovered from invalid persisted data/);
+  assert.match(f.elements.get('status').textContent, /Edge hidden/);
+});
+
+test('hidden controller picker shows the connected selected target even without an Edge window', async () => {
+  const f = setup(); await f.controller.start();
+  const data = snapshot('hidden'); data.state.scene.visible = false; data.state.displayPreference.mode = 'manual'; data.edge.displayId = null; data.selectedTargetDisplayId = 8;
+  f.receive(data); assert.equal(f.elements.get('display').value, '8');
+  assert.ok(f.elements.get('display').children.every(option => !/unavailable/.test(option.textContent)));
+  data.selectedTargetDisplayId = null; f.receive(data); assert.equal(f.elements.get('display').value, '');
+  assert.ok(f.elements.get('display').children.some(option => /unavailable/.test(option.textContent)));
+});

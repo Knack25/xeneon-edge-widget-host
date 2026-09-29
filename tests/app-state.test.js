@@ -27,6 +27,65 @@ test('default state contains one page and one full-size region', () => {
   }]);
 });
 
+test('persisted invalid or lossy state preserves exact bytes and exposes a transient recovery diagnostic', async t => {
+  const { temp } = fixture(t);
+  const unsupported = { version: 99, widgetSettings: { clock: { inputGain: 145 } } };
+  const malformed = createDefaultState('clock'); malformed.scene.pages = [];
+  const lossy = createDefaultState('clock'); lossy.widgetSettings.clock = JSON.parse('{"color":"blue","constructor":7}');
+  for (const [index, raw] of [unsupported, malformed, lossy, '{broken'].entries()) {
+    const statePath = path.join(temp, `state-${index}.json`);
+    const bytes = Buffer.from(typeof raw === 'string' ? raw : `  ${JSON.stringify(raw)}\n\n`);
+    fs.writeFileSync(statePath, bytes);
+    const store = createStateStore({ statePath, defaultWidgetId: 'clock', writeDelayMs: 10000 });
+    assert.equal(store.recoveryDiagnostic()?.status, 'recovered');
+    assert.doesNotMatch(JSON.stringify(store.recoveryDiagnostic()), /state-|app-state-/);
+    const backup = fs.readdirSync(temp).find(name => name.startsWith(`state-${index}.json.corrupt-`));
+    assert.ok(backup); assert.deepEqual(fs.readFileSync(path.join(temp, backup)), bytes);
+    await store.flush();
+    assert.equal(JSON.parse(fs.readFileSync(statePath)).recovery, undefined);
+    const reloaded = createStateStore({ statePath, defaultWidgetId: 'clock' });
+    assert.equal(reloaded.recoveryDiagnostic(), null); await reloaded.flush();
+  }
+});
+
+test('benign persisted canonicalization and ordinary updates do not create recovery backups', async t => {
+  const { temp, statePath } = fixture(t);
+  const raw = createDefaultState('clock'); raw.unknown = 'ignored'; raw.controllerBounds = { x: 1, y: 2, width: 500, height: 300, extra: true };
+  fs.writeFileSync(statePath, JSON.stringify(raw));
+  const store = createStateStore({ statePath, defaultWidgetId: 'clock' });
+  assert.equal(store.recoveryDiagnostic(), null);
+  store.update(state => { state.scene.pages.push({ id: 'ignored' }); }); await store.flush();
+  assert.deepEqual(fs.readdirSync(temp), ['state.json']);
+});
+
+test('same-timestamp recovery never overwrites an earlier backup', async t => {
+  const { temp, statePath } = fixture(t);
+  t.mock.method(Date.prototype, 'toISOString', () => '2026-09-29T00:00:00.000Z');
+  for (const bytes of ['{first', '{second']) {
+    fs.writeFileSync(statePath, bytes);
+    const store = createStateStore({ statePath, defaultWidgetId: 'clock' }); await store.flush();
+  }
+  const originals = fs.readdirSync(temp).filter(name => name.startsWith('state.json.corrupt-')).map(name => fs.readFileSync(path.join(temp, name), 'utf8')).sort();
+  assert.deepEqual(originals, ['{first', '{second']);
+});
+
+test('a failed recovery backup aborts initialization and leaves the original persisted bytes untouched', async t => {
+  const { temp, statePath } = fixture(t); const bytes = Buffer.from('{"version":99,"widgetSettings":{"clock":{"gain":145}}}');
+  fs.writeFileSync(statePath, bytes);
+  t.mock.method(fs, 'copyFileSync', () => { throw Object.assign(Error('backup storage full'), { code: 'ENOSPC' }); });
+  assert.throws(() => createStateStore({ statePath, defaultWidgetId: 'clock', writeDelayMs: 0 }), /backup storage full/);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(fs.readFileSync(statePath), bytes); assert.deepEqual(fs.readdirSync(temp), ['state.json']);
+});
+
+test('oversized settings arrays are rejected before allocating or reading their indices', () => {
+  let reads = 0;
+  const values = new Proxy(new Array(10001), { getOwnPropertyDescriptor(target, key) { if (/^\d+$/.test(key)) reads++; return Reflect.getOwnPropertyDescriptor(target, key); } });
+  const raw = createDefaultState('clock'); raw.scene.pages[0].regions[0].settings = { values };
+  assert.deepEqual(normalizeState(raw).scene.pages[0].regions[0].settings, {});
+  assert.equal(reads, 0);
+});
+
 test('corrupt state is backed up and replaced by persisted defaults', async (t) => {
   const { temp, statePath } = fixture(t);
   fs.writeFileSync(statePath, '{broken');

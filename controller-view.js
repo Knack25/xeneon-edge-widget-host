@@ -17,7 +17,8 @@
     if (edge.loadStatus === 'loading') message += ' · Loading widget';
     if (edge.loadStatus === 'failed') message += ` · Widget failed to prepare${edge.retainedWidgetId ? '; previous widget retained' : ''}`;
     if (edge.error) message += ` · ${edge.error}`;
-    return { revision: snapshot.revision, widgets, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (edge.displayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };
+    if (snapshot.recovery?.status === 'recovered') message += ' · State recovered from invalid persisted data; original configuration preserved';
+    return { revision: snapshot.revision, widgets, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (snapshot.selectedTargetDisplayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };
   }
   const api = { buildControllerViewModel };
   if (typeof module === 'object' && module.exports) module.exports = api;

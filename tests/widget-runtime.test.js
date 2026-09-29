@@ -68,6 +68,37 @@ test('settings during fetch and frame wait reach the promoted widget at latest r
   f.frames[0].finish(); await load; assert.equal(f.live().contentWindow.transparency, 29); assert.equal(f.live().contentWindow.showSeconds, true);
   assert.deepEqual(f.reports, [{ revision: 3, ok: true }]);
 });
+
+test('preparation deadline includes stalled fetch and initial async settings and reports latest pending revision', async t => {
+  const blocked = deferred(); let blockFetch = false;
+  const f = fixture({ frameLoadTimeoutMs: 30, fetchText: () => blockFetch ? blocked.promise : Promise.resolve('<head></head>') });
+  t.after(() => f.runtime.destroy());
+  await f.load(); const previous = f.live(); blockFetch = true;
+  const watchdog = () => new Promise((_, reject) => setTimeout(() => reject(Error('preparation failed to enforce its deadline')), 150));
+  await assert.rejects(Promise.race([f.runtime.load({ widget: doodle, revision: 2 }), watchdog()]), /timed out/);
+  assert.equal(f.live(), previous); blocked.resolve('<head></head>'); blockFetch = false;
+  const loading = f.runtime.load({ widget: doodle, revision: 3, settings: { transparency: 22 } });
+  const failure = assert.rejects(Promise.race([loading, watchdog()]), /timed out/); await settle(); const staged = f.frames.at(-1); staged.finish();
+  staged.contentWindow.icueEvents.onDataUpdated = () => new Promise(() => {});
+  await settle(); await f.runtime.updateSettings({ revision: 4, settings: { transparency: 33 } }); await failure;
+  assert.equal(f.live(), previous); assert.equal(f.region.children.length, 1); assert.equal(staged.listenerCount(), 0);
+  assert.equal(f.reports.at(-1).revision, 4); assert.equal(f.reports.at(-1).ok, false);
+  await f.runtime.updateSettings({ revision: 5, settings: { transparency: 44 } });
+  assert.equal(f.reports.at(-1).revision, 5); assert.equal(previous.contentWindow.transparency, 80); f.runtime.destroy();
+});
+
+test('initial settings can advance to the latest revision and cancelled preparation cannot report a stale deadline or failure', async () => {
+  const f = fixture({ frameLoadTimeoutMs: 60 }); await f.load(); const pending = deferred();
+  const loading = f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }); await settle(); const staged = f.frames.at(-1); staged.finish();
+  let calls = 0; staged.contentWindow.icueEvents.onDataUpdated = () => ++calls === 1 ? pending.promise : Promise.resolve();
+  await settle(); await f.runtime.updateSettings({ revision: 3, settings: { transparency: 33 } }); pending.reject(Error('obsolete initial callback'));
+  await loading; assert.equal(f.live(), staged); assert.equal(staged.contentWindow.transparency, 33); assert.deepEqual(f.reports.at(-1), { revision: 3, ok: true });
+  const staleCallback = deferred(); const abandoned = f.runtime.load({ widget: clock, revision: 4 }); await settle(); const old = f.frames.at(-1); old.finish();
+  old.contentWindow.icueEvents.onDataUpdated = () => staleCallback.promise; await settle();
+  await f.load(doodle, 5); assert.deepEqual(await abandoned, { stale: true }); staleCallback.reject(Error('cancelled callback'));
+  await new Promise(resolve => setTimeout(resolve, 70)); assert.ok(old.removed); assert.equal(old.listenerCount(), 0);
+  assert.ok(f.reports.every(report => report.revision !== 4)); assert.deepEqual(f.reports.at(-1), { revision: 5, ok: true }); f.runtime.destroy();
+});
 test('frame failure, timeout and destroy dispose staged frames without losing live content', async () => {
   const f = fixture({ frameLoadTimeoutMs: 15 }); await f.load(); const previous = f.live();
   const failed = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).dispatch('error'); await assert.rejects(failed, /frame/i); assert.equal(f.live(), previous);

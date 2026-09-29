@@ -22,7 +22,9 @@ Simultaneous multi-widget layout/editing follows on a later branch.
 Current automated tests and real Mac/Edge smoke are recorded in
 [validation](docs/validation/2026-09-22-two-window-macos.md). Task 8's final baseline
 passed 111 node:test cases and real smoke on darwin arm64 / Electron 41.5.0,
-targeting the actual XENEON EDGE. The record contains Task 9 verification dates.
+targeting the actual XENEON EDGE. The final-review fix wave passed 124/124 tests
+and refreshed real smoke at 2026-09-29T15:45:55.893Z with zero renderer errors.
+The record contains Task 9 and final-fix verification dates and logs.
 
 Smoke proves native windows/runtime selection, live settings, animation after
 controller close, activation recreation, Hide/Show and app.quit/server cleanup.
@@ -49,8 +51,8 @@ browser-only mode does not provide native controller IPC.
   lifecycle, native presentation, state/command coordination and recovery.
 - `display-policy.js`, `presentation.js`: display fingerprints, safe controller
   bounds and shared native presentation helpers.
-- `app-state.js`: state, per-widget settings, one-time legacy migration,
-  atomic persistence and corrupt-JSON recovery.
+- `app-state.js`: state, per-widget settings, one-time legacy migration with a
+  durable acknowledgement, atomic persistence and invalid-state backup/recovery.
 - `widget-library.js`, `web-server.js`: bundled/managed catalog, staged imports,
   confirmed same-ID overrides and canonical server routes.
 - `controller.html`, `controller.js`, `controller-view.js`, `preload-controller.js`:
