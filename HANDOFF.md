@@ -1,141 +1,76 @@
-# Continue on an Apple Silicon Mac
+# Two-window Mac handoff
 
-Handoff updated 2026-09-21. Implementation baseline: `eea16a8` on `main`.
+Updated 2026-09-29. Tasks 1–8 implementation baseline: `265ddd3`.
+Implementation lives in isolated `feat/two-window-implementation`; the original
+`feat/two-window-controller` retains the approved spec and plan. No merge or push
+is authorized by this checkpoint.
 
-## Objective and scope
+The static controller opens on the primary Mac display; Edge owns the sole live
+widget. Selection/settings preserve Edge fullscreen. Controller close keeps Edge
+and server running; Dock activation recreates/focuses the controller. Hide/Show
+destroys/recreates only Edge, preserving its scene. Command-Q closes both windows,
+flushes state and closes `127.0.0.1:8080`. Edge has no app overlay or Escape exit.
+See [README-MACOS.md](README-MACOS.md) for operation, durable imports, display
+fingerprints and actual userData path semantics.
 
-Prove a minimal standalone macOS host for existing iCUE-style widgets on the
-XENEON Edge. Keep Corsair's Electron renderer, widget loader and compatibility
-shim. Do not redesign the runtime or begin integrations until the current Mac
-display/fullscreen behavior is verified.
+Phase one has one page/one full-page widget. Page creation and Edge-initiated
+navigation come next, with gesture/button testing against scrolling and drawing.
+Simultaneous multi-widget layout/editing follows on a later branch.
 
-The user is moving this conversation from Windows to the desktop app on an
-Apple Silicon Mac. Start by inspecting the local checkout and available tools;
-do not assume the previous Windows workspace, dependencies or authentication
-are present. The code is already published; do not recreate the project.
+## Evidence and next acceptance
 
-## What is done
+Current automated tests and real Mac/Edge smoke are recorded in
+[validation](docs/validation/2026-09-22-two-window-macos.md). Task 8's final baseline
+passed 111 node:test cases and real smoke on darwin arm64 / Electron 41.5.0,
+targeting the actual XENEON EDGE. The record contains Task 9 verification dates.
 
-- Repository: https://github.com/Knack25/xeneon-edge-widget-host (public).
-- Based on Corsair-Labs/iCUE-widget-runner-RaspberryPi, upstream commit
-  `1c3318533aa201f3d7a1b4b3526b8a2e2ca69630`. Upstream history is retained.
-- Default widget: unchanged bundled Robex Tourbillon 1.0.4, selected through
-  the upstream URL query mechanism. It needs no audio bridge or network data.
-- Native Mac window controls, application-owned local server, working
-  close/reopen lifecycle, clear failure when port 8080 is occupied.
-- Automatic Edge targeting at window startup by a unique external display
-  name containing XENEON and EDGE; fallback to a unique 2560 × 720 physical
-  size estimate (logical bounds × scale factor, either orientation).
-- Manual display picker when detection is absent or ambiguous.
-- Widget-only fullscreen; Escape works with widget focus, and a visible
-  touch-accessible Exit fullscreen button returns to the launcher.
-- Target unplug exits presentation and moves the launcher to the primary
-  display. Reconnection requires selecting/starting fullscreen again.
-- Mac uses simple fullscreen to avoid creating another Space. Entering from
-  native green-button fullscreen is rejected with instructions to exit it first.
+Smoke proves native windows/runtime selection, live settings, animation after
+controller close, activation recreation, Hide/Show and app.quit/server cleanup.
+It does not accept physical touch, visual Dock occlusion, Dock clicking, physical
+Command-Q, unplug/reconnect, restart restoration or native import UI. All ten
+physical checks are PENDING until user confirmation on this build. Prior
+single-window confirmations are historical context only. Preserve the existing
+touch-driver setup; do not infer a driver reinstall from an app window issue.
 
-## Evidence: keep these distinctions
+Continue by inspecting `git status` and preserving local work. Use the validation
+checklist in order with the user, record actual pass/fail and deviations, and
+diagnose reproducible failures before targeted changes. Do not alter or relaunch
+a user's running app/profile for tests. Smoke uses an isolated profile and refuses
+an occupied port.
 
-**User-confirmed on a Mac, original Phase 1 build:** runner launches, Robex
-clock renders and animates, Edge is an extended display, touch is accurate,
-and closing/reopening works. Exact Mac model, architecture and OS version
-were not recorded for those checks. The destination for continuation is
-explicitly Apple Silicon.
+## Setup and code map
 
-**Agent-verified on Windows x64, latest implementation:** nine regression
-tests pass; real Electron 41.5.0 smoke test passes for clock/shim initialization,
-animation, full-viewport widget layout, preservation of the running widget,
-Escape with iframe focus, and the exit button. No renderer errors were recorded.
-Independent review found a native Mac fullscreen conflict; the guard and a
-regression test were added before publishing.
+On Apple Silicon use native ARM64 Node.js 22 or newer, `npm ci`, then `npm start`.
+No build/package step or iCUE installation is required. Keep Electron 41.5.0 and
+macOS 12 or later. `run-all.sh` and audio helpers retain Linux/Pi assumptions;
+browser-only mode does not provide native controller IPC.
 
-**Still unverified:** latest automatic targeting, simple fullscreen, touch
-after fullscreen transitions, and unplug/reconnect behavior on physical Mac
-and Edge hardware. Mocked Mac branches and Windows screenshots do not prove
-those behaviors. Do not repeat all Phase 1 work or claim new hardware checks
-passed based solely on the user's earlier confirmations.
+- `main.js`, `app-coordinator.js`, `window-factories.js`: server/two-window
+  lifecycle, native presentation, state/command coordination and recovery.
+- `display-policy.js`, `presentation.js`: display fingerprints, safe controller
+  bounds and shared native presentation helpers.
+- `app-state.js`: state, per-widget settings, one-time legacy migration,
+  atomic persistence and corrupt-JSON recovery.
+- `widget-library.js`, `web-server.js`: bundled/managed catalog, staged imports,
+  confirmed same-ID overrides and canonical server routes.
+- `controller.html`, `controller.js`, `controller-view.js`, `preload-controller.js`:
+  static library/settings UI and narrow controller bridge.
+- `edge.html`, `edge.js`, `widget-runtime.js`, `preload-edge.js`: sole live widget,
+  staged preparation, settings and restricted load reporting.
+- `tests/`, `scripts/run-smoke.js`, `scripts/smoke-child.js`: node:test boundaries
+  and real Electron smoke with bounded owned-child shutdown.
 
-## First actions on the Mac
+## Constraints and provenance
 
-If a checkout is already present, inspect `git status` and preserve local work
-before updating it. Otherwise:
+Keep CommonJS, node:test, existing runtime dependencies and locked Electron.
+Use Conventional Commits. Preserve MIT LICENSE, DISCLAIMER NOTICE, all widget
+author credits and upstream history. Public repository:
+[Knack25/xeneon-edge-widget-host](https://github.com/Knack25/xeneon-edge-widget-host),
+based on Corsair-Labs/iCUE-widget-runner-RaspberryPi commit
+`1c3318533aa201f3d7a1b4b3526b8a2e2ca69630`.
 
-```sh
-git clone https://github.com/Knack25/xeneon-edge-widget-host.git
-cd xeneon-edge-widget-host
-node -p 'process.platform + " " + process.arch'
-sw_vers
-npm ci
-npm test
-npm run test:smoke
-npm start
-```
-
-Expect `darwin arm64` from Node. Install native ARM64 Node.js 22 or newer if
-needed. Do not transfer Windows `node_modules`. There is no app build step;
-`npm ci` installs Electron and `npm start` runs the source. Use macOS 12 or
-later for the locked Electron version. Do not use the Linux `run-all.sh`.
-Quit a normal runner before the smoke test: both use loopback port 8080.
-
-The smoke test writes `artifacts/smoke-result.json`, `clock-electron.png` and
-`clock-fullscreen.png`. Check the actual platform/architecture and
-`macReopenVerified` result. These artifacts and test profiles are Git-ignored.
-The test enters fullscreen on its first listed display and then exits; that
-automated check is not itself a physical Edge targeting test.
-
-## Hardware acceptance checklist
-
-1. Record Mac model, macOS version and Node architecture. Connect the Edge as
-   an extended display before launching.
-2. Start the app. Confirm the clock opens on the Edge, with sidebar/toolbar
-   hidden. If not, inspect the reported display name, bounds and scale factor;
-   try the manual picker before changing detection heuristics.
-3. Tap Exit fullscreen, choose another widget (Doodle pad is useful), and
-   press Show widget fullscreen. Verify the selected widget is retained.
-4. Check touch at corners and continuous drawing in fullscreen. Check Escape
-   while the widget has focus, then the touch exit button again.
-5. Unplug the target: confirm a usable launcher returns on the primary
-   display. Reconnect and re-enter through the picker/button.
-6. Close/reopen and quit/relaunch. Reopening deliberately redetects the Edge
-   and starts the default clock; last-widget/display persistence is not built.
-7. Test the native green-button fullscreen case: the app must explain that
-   native fullscreen needs to be exited before display-targeted presentation.
-
-Record outcomes and actual failures in README-MACOS.md or a dated validation
-note. Diagnose reproducible failures and keep fixes small, with relevant tests.
-If desktop tools are unavailable, guide the user through hardware checks and
-clearly label their reports instead of claiming to have observed the screen.
-
-## Code map
-
-- `main.js`: Electron window/server lifecycle, initial automatic presentation,
-  and presentation IPC restricted to the launcher main frame.
-- `presentation.js`: detection, display placement, fullscreen state, Escape,
-  unplug handling and listener cleanup.
-- `presentation-ui.js`, `index.html`: display picker, layout and exit control.
-- `preload.js`: narrow Electron bridge; no Node integration in the renderer.
-- `runner-v2.js`: upstream loading/shim, only duplicate Mac controls changed.
-- `tests/main.test.js`: four startup/lifecycle tests with substituted boundaries.
-- `tests/presentation.test.js`: five display/presentation regression tests.
-- `tests/electron-smoke.js`, `scripts/run-smoke.js`: real Electron verification.
-- `README-MACOS.md`: setup, behavior, limitations and provenance.
-
-## Constraints and known limitations
-
-- Preserve LICENSE, DISCLAIMER NOTICE and all upstream/widget author credits.
-- Use Conventional Commits for new commits, e.g. `fix: ...`, `feat: ...`,
-  `docs: ...`. Keep upstream historical commits intact.
-- Resolution matching is a fallback heuristic, not a device identity guarantee.
-- No saved display preference, last-widget persistence, login launch, DMG,
-  signing, notarization, multi-widget layout or `.icuewidget` importer yet.
-- Mac system audio, real sensor telemetry and third-party integrations are
-  deferred. Upstream audio helpers use Linux PulseAudio/PipeWire and FFmpeg.
-- The trusted-local-widget prototype is not hardened for arbitrary imports.
-- The retained Electron 41.5.0/extract-zip dependency tree reported two
-  high-severity audit findings. Details are in README-MACOS.md. Versions were
-  intentionally retained for the port; assess patched dependencies before
-  broader distribution rather than silently treating this as production-ready.
-
-The immediate next task is **Mac verification of existing targeting/fullscreen
-code**, followed by fixes only if evidence requires them. Discuss the next
-feature scope after that verification is complete.
+No packaging/signing/notarization/login launch, `.icuewidget` archive importer,
+macOS audio, real telemetry or integrations are implemented. Folder validation
+exists, but arbitrary widget scripts are not a hardened trust boundary. Historical
+audit findings need reassessment before distribution. No paid software is required
+for the offline clock or this workflow.
