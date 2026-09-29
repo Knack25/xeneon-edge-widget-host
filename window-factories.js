@@ -33,12 +33,18 @@ function protectNavigation(window, url) {
 
 function load(window, url, present, onLoadError = error => console.error(error)) {
   protectNavigation(window, url);
+  // Main-process-only contract: activation may show/focus this window after
+  // true. False releases pending activations when loading fails or it closes.
+  let settleReady;
+  window.presentationReady = new Promise(resolve => { settleReady = resolve; });
+  window.once('closed', () => settleReady(false));
   let ready = false, loaded = false, shown = false;
   const show = () => {
     if (!ready || !loaded || shown || window.isDestroyed()) return;
     shown = true;
     present();
     window.show();
+    settleReady(true);
   };
   window.once('ready-to-show', () => { ready = true; show(); });
   // Deferral lets the coordinator install its window ownership before callbacks.
@@ -48,6 +54,7 @@ function load(window, url, present, onLoadError = error => console.error(error))
     loaded = true;
     show();
   }).catch(error => {
+    settleReady(false);
     if (!window.isDestroyed()) onLoadError(error, window);
   });
   return window;

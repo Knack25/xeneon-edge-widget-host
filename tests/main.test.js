@@ -14,7 +14,7 @@ const edge = { id: 2, label: 'XENEON Edge', internal: false, scaleFactor: 1,
   bounds: { x: 1440, y: 0, width: 2560, height: 720 }, workArea: { x: 1440, y: 0, width: 2560, height: 720 } };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function nativeRuntime({ platform = 'darwin', loadGate, loadError } = {}) {
+function nativeRuntime({ platform = 'darwin', loadGate, readyGate, loadError } = {}) {
   const windows = [], app = new EventEmitter(), ipcMain = new EventEmitter(), handlers = new Map();
   ipcMain.handle = (channel, fn) => handlers.set(channel, fn);
   const screen = new EventEmitter();
@@ -27,7 +27,14 @@ function nativeRuntime({ platform = 'darwin', loadGate, loadError } = {}) {
       this.webContents.send = () => {}; this.webContents.setWindowOpenHandler = fn => { this.openHandler = fn; };
       windows.push(this);
     }
-    async loadURL(url) { this.url = url; if (loadGate) await loadGate; if (loadError) throw loadError; this.emit('ready-to-show'); }
+    async loadURL(url) {
+      this.url = url;
+      const gate = typeof loadGate === 'function' ? loadGate(this) : loadGate;
+      if (gate) await gate;
+      if (loadError) throw loadError;
+      if (readyGate) readyGate.then(() => this.emit('ready-to-show'));
+      else this.emit('ready-to-show');
+    }
     isDestroyed() { return this.destroyed; }
     getBounds() { return this.bounds; }
     setBounds(bounds) { this.bounds = bounds; this.actions.push('bounds'); }
@@ -107,6 +114,47 @@ test('controller close and activation retain Edge and one application server', a
   r.app.emit('activate'); r.app.emit('activate'); await tick();
   assert.equal(r.windows.length, 3); assert.equal(r.starts(), 1);
   assert.equal(r.windows[1].isDestroyed(), false);
+});
+
+test('activation waits for successful controller loading and ready-to-show', async t => {
+  let loaded, ready;
+  const loadGate = new Promise(resolve => { loaded = resolve; });
+  const readyGate = new Promise(resolve => { ready = resolve; });
+  const r = await boot(t, { loadGate, readyGate });
+  r.app.emit('activate'); r.app.emit('activate'); await tick();
+  assert.deepEqual(r.windows[0].actions, []);
+  loaded(); await tick(); assert.deepEqual(r.windows[0].actions, []);
+  ready(); await tick();
+  assert.ok(r.windows[0].actions.includes('show')); assert.ok(r.windows[0].actions.includes('focus'));
+});
+
+test('repeated activation waits for a recreated controller page to load', async t => {
+  let loaded, controllerLoads = 0;
+  const loadGate = new Promise(resolve => { loaded = resolve; });
+  const r = await boot(t, { loadGate: win => /controller\.html$/.test(win.url) && controllerLoads++ > 0 ? loadGate : null });
+  r.windows[0].close(); r.app.emit('activate'); r.app.emit('activate'); await tick();
+  assert.equal(r.windows.length, 3); assert.deepEqual(r.windows[2].actions, []);
+  loaded(); await tick(); assert.ok(r.windows[2].actions.includes('show'));
+});
+
+test('quit settles pending factory readiness and activation without a late show', async t => {
+  let loaded; const loadGate = new Promise(resolve => { loaded = resolve; });
+  const r = await boot(t, { loadGate });
+  r.app.emit('activate'); await tick(); r.app.quit(); await tick();
+  assert.deepEqual(r.windows[0].actions, []);
+  assert.equal(await r.windows[0].presentationReady, false);
+  loaded(); await tick();
+  assert.deepEqual(r.windows[0].actions, []); assert.equal(r.quits(), 1); assert.deepEqual(r.errors, []);
+});
+
+test('a rejected controller load settles readiness and is never shown by pending activation', async t => {
+  let fail; const loadGate = new Promise((_resolve, reject) => { fail = reject; });
+  const r = await boot(t, { loadGate });
+  r.app.emit('activate'); await tick(); assert.deepEqual(r.windows[0].actions, []);
+  fail(new Error('load failed')); await tick();
+  assert.equal(await r.windows[0].presentationReady, false);
+  assert.deepEqual(r.windows[0].actions, []); assert.equal(r.windows[0].isDestroyed(), true);
+  assert.equal(r.app.exitCode, 1);
 });
 
 test('before-quit waits for cleanup and repeated requests issue one actual quit', async t => {
@@ -197,4 +245,5 @@ test('async load completion never shows a destroyed window and load failures sta
   const failed = nativeRuntime({ loadError: new Error('load failed') }); const errors = [];
   const broken = failed.factories().createControllerWindow({ bounds: laptop.workArea, onLoadError: error => errors.push(error) });
   await tick(); assert.equal(broken.actions.includes('show'), false); assert.equal(errors.length, 1);
+  assert.equal(await broken.presentationReady, false);
 });

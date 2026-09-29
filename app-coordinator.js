@@ -21,6 +21,8 @@ function publicDisplay(display) {
 }
 
 // Factories load their renderer and own ready-to-show placement/presentation.
+// Optional window.presentationReady resolves true after the initial show, or
+// false on failed loading/destruction. Activation awaits it before show/focus.
 // No widget or setting command moves a native window.
 function createAppCoordinator({ stateStore, widgetLibrary, screen,
   createControllerWindow, createEdgeWindow, startServer,
@@ -179,7 +181,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
 
   function openController() {
     assertRunning();
-    if (live(controllerWindow)) { controllerWindow.show(); controllerWindow.focus(); return; }
+    if (live(controllerWindow)) return controllerWindow;
     const resolution = resolveTarget();
     const bounds = displayPolicy.safeControllerBounds(stateStore.snapshot().controllerBounds,
       screen.getAllDisplays(), resolution.display?.id, screen.getPrimaryDisplay());
@@ -187,6 +189,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     controllerWindow = window;
     window.on('close', () => { if (!quitting) saveControllerBounds(window); });
     window.once('closed', () => { if (controllerWindow === window) controllerWindow = null; broadcast(); });
+    return window;
   }
 
   function topologyChanged() {
@@ -314,7 +317,20 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     return merged;
   }
 
-  async function activate() { assertRunning(); await start(); assertRunning(); openController(); broadcast(); return snapshot(); }
+  async function activate() {
+    assertRunning();
+    await start();
+    assertRunning();
+    const window = openController();
+    const ready = window.presentationReady ? await window.presentationReady : true;
+    assertRunning();
+    if (ready !== false && window === controllerWindow && live(window)) {
+      window.show();
+      window.focus();
+    }
+    broadcast();
+    return snapshot();
+  }
 
   function closeServer() {
     if (!server) return Promise.resolve();

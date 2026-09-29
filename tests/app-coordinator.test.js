@@ -86,6 +86,26 @@ test('closing controller leaves Edge and server alive; activate restores control
   await r.coordinator.activate(); assert.equal(r.controllers.length, 2); assert.equal(r.controllers[1].focused, true);
 });
 
+test('activation waits for factory readiness and cannot show a replaced controller', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const old = r.controllers[0]; let ready;
+  old.presentationReady = new Promise(resolve => { ready = resolve; });
+  const activation = r.coordinator.activate(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(old.shown, undefined); old.close();
+  await r.coordinator.activate(); const current = r.controllers[1];
+  ready(true); await activation;
+  assert.equal(old.shown, undefined); assert.equal(current.focused, true);
+});
+
+test('activation rechecks shutdown after factory readiness resolves', async t => {
+  const r = fixture(t); await r.coordinator.start(); const win = r.controllers[0]; let ready;
+  win.presentationReady = new Promise(resolve => { ready = resolve; });
+  const activation = r.coordinator.activate(); await new Promise(resolve => setImmediate(resolve));
+  const stopped = r.coordinator.quit(); ready(true);
+  await assert.rejects(activation, /quitting/i); await stopped;
+  assert.equal(win.shown, undefined); assert.equal(win.focused, false);
+});
+
 test('settings and widget switches preserve per-widget values without recreating Edge', async t => {
   const r = fixture(t); await r.coordinator.start();
   r.coordinator.updateSetting('gain', 1); r.coordinator.updateSetting('gain', 2);
