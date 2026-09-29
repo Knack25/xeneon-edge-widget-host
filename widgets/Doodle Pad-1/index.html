@@ -556,9 +556,8 @@ class MediaViewer {
     }
 
     // --- Persistence ---
-    // Widget Builder pattern:
-    // - use uniqueId as the localStorage key
-    // - store/retrieve a JSON object under that key
+    // The Edge host scopes uniqueId to the page and migrates an older shared
+    // drawing before this script runs. Standalone iCUE keeps its normal key.
     const widgetId = uniqueId;
 
     function readStoredState(options) {
@@ -862,8 +861,9 @@ class MediaViewer {
       onIcueDataUpdated();
     }
 
-    // --- Hide panel on focus loss ---
-    window.addEventListener('blur', hideToolbar);
+    // --- Document lifecycle ---
+    // Touch input restores focus to the laptop after each tap. Keep the
+    // panel open across that blur so its tools remain usable on the Edge.
     document.addEventListener('visibilitychange', function() {
       if (document.hidden) {
         hideToolbar();
