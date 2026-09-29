@@ -34,6 +34,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   let widgets = [];
   let catalogRevision = 0;
   let targetDisplay = null;
+  let selectedDisplayId = null;
   let automaticFingerprint = null;
   let recoveryAttempts = [];
   let recoveryFailed = false;
@@ -90,10 +91,16 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   }
 
   function resolveTarget() {
+    const displays = screen.getAllDisplays();
+    if (selectedDisplayId !== null) {
+      const selected = displays.find(display => display.id === selectedDisplayId);
+      if (selected) return { display: selected, reason: 'matched' };
+      selectedDisplayId = null;
+    }
     const preference = stateStore.snapshot().displayPreference;
     const effective = preference.mode === 'automatic' && automaticFingerprint ?
       { mode: 'manual', fingerprint: automaticFingerprint } : preference;
-    const resolution = displayPolicy.resolveEdgeDisplay(screen.getAllDisplays(), effective);
+    const resolution = displayPolicy.resolveEdgeDisplay(displays, effective);
     if (preference.mode === 'automatic' && resolution.display && !automaticFingerprint) {
       // Session-scoped: unplugging the selected Edge must not adopt another Edge.
       automaticFingerprint = displayPolicy.fingerprintDisplay(resolution.display);
@@ -171,6 +178,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   }
 
   function openController() {
+    assertRunning();
     if (live(controllerWindow)) { controllerWindow.show(); controllerWindow.focus(); return; }
     const resolution = resolveTarget();
     const bounds = displayPolicy.safeControllerBounds(stateStore.snapshot().controllerBounds,
@@ -181,7 +189,14 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     window.once('closed', () => { if (controllerWindow === window) controllerWindow = null; broadcast(); });
   }
 
-  function topologyChanged() { if (!quitting) { reconcileEdge(); broadcast(); } }
+  function topologyChanged() {
+    if (!quitting) {
+      // Invalidate disconnected session IDs even while the Edge is hidden or failed.
+      resolveTarget();
+      reconcileEdge();
+      broadcast();
+    }
+  }
 
   function start() {
     assertRunning();
@@ -235,6 +250,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
       state.displayPreference = displayId === 'automatic' ? { mode: 'automatic', fingerprint: null } :
         { mode: 'manual', fingerprint: displayPolicy.fingerprintDisplay(display) };
     });
+    selectedDisplayId = displayId === 'automatic' ? null : displayId;
     automaticFingerprint = null;
     reconcileEdge(); broadcast(); return snapshot();
   }
@@ -298,7 +314,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     return merged;
   }
 
-  async function activate() { assertRunning(); await start(); openController(); broadcast(); return snapshot(); }
+  async function activate() { assertRunning(); await start(); assertRunning(); openController(); broadcast(); return snapshot(); }
 
   function closeServer() {
     if (!server) return Promise.resolve();

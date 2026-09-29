@@ -133,9 +133,38 @@ test('missing saved widget remains selected and reports failure', async t => {
 test('ambiguous automatic selection waits for explicit display selection', async t => {
   const r = fixture(t, { displays: [laptop, edge, { ...edge, id: 3 }] }); await r.coordinator.start();
   assert.equal(r.edges.length, 0); assert.equal(r.coordinator.snapshot().edge.status, 'ambiguous');
-  r.topology([laptop, edge, { ...edge, id: 3, label: 'Second Edge' }]);
   r.coordinator.selectDisplay(2); assert.equal(r.edges.length, 1);
+  assert.equal(r.coordinator.snapshot().edge.displayId, 2);
   assert.equal(r.coordinator.snapshot().state.displayPreference.mode, 'manual');
+  assert.equal(JSON.stringify(r.coordinator.snapshot().state.displayPreference).includes('"id"'), false);
+  r.topology([laptop, edge, { ...edge, id: 3 }], 'display-metrics-changed');
+  assert.equal(r.coordinator.snapshot().edge.displayId, 2);
+  assert.equal(r.edges.length, 1);
+  r.coordinator.selectDisplay(3);
+  assert.equal(r.coordinator.snapshot().edge.displayId, 3);
+});
+
+test('manual selection loses its session ID on disconnect and reconnect requires a unique fingerprint', async t => {
+  const r = fixture(t, { displays: [laptop, edge, { ...edge, id: 3 }] }); await r.coordinator.start();
+  r.coordinator.selectDisplay(2);
+  assert.equal(r.coordinator.snapshot().edge.displayId, 2);
+  r.coordinator.setEdgeVisible(false);
+  r.topology([laptop], 'display-removed');
+  r.topology([laptop, edge, { ...edge, id: 44 }]);
+  r.coordinator.setEdgeVisible(true);
+  assert.equal(r.coordinator.snapshot().edge.status, 'ambiguous');
+  assert.equal(r.coordinator.getEdgeWindow(), null);
+  r.topology([laptop, { ...edge, id: 44 }], 'display-removed');
+  assert.equal(r.coordinator.snapshot().edge.displayId, 44);
+});
+
+test('saved manual preference cannot resolve identical display fingerprints after startup', async t => {
+  const r = fixture(t, { displays: [laptop, edge, { ...edge, id: 3 }], prepare: store => store.update(state => {
+    state.displayPreference = { mode: 'manual', fingerprint: { label: 'XENEON Edge', physicalWidth: 720, physicalHeight: 2560 } };
+  }) });
+  await r.coordinator.start();
+  assert.equal(r.coordinator.snapshot().edge.status, 'ambiguous');
+  assert.equal(r.edges.length, 0);
 });
 
 test('disconnect pins the target and restores only a unique matching reconnect', async t => {
@@ -213,6 +242,19 @@ test('startup creates no windows before server readiness and quit during startup
   const quitting = r.coordinator.quit(); release();
   await started; await quitting;
   assert.equal(r.controllers.length, 0); assert.equal(r.edges.length, 0); assert.equal(r.server.closed, true);
+});
+
+test('pending activation cannot create a controller once quit starts', async t => {
+  let release;
+  const serverGate = new Promise(resolve => { release = resolve; });
+  const r = fixture(t, { serverGate });
+  const activation = r.coordinator.activate();
+  const rejected = assert.rejects(activation, /quitting/);
+  const quitting = r.coordinator.quit();
+  release(); await rejected; await quitting;
+  assert.equal(r.controllers.length, 0); assert.equal(r.edges.length, 0);
+  assert.equal(r.coordinator.snapshot().state.controllerBounds, null);
+  assert.equal(r.server.closed, true);
 });
 
 test('public snapshots and broadcasts omit roots and isolate references', async t => {
