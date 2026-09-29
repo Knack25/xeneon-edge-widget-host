@@ -133,13 +133,21 @@ app.whenReady().then(async () => {
   assert.equal((await frame(edge)).overlay, false);
   report.escapeIgnored = true;
   await command(controller, 'selectWidget', 'com.shocksim.robextourbillon');
-  const restored = await loaded(controller, edge, 'com.shocksim.robextourbillon');
+  await loaded(controller, edge, 'com.shocksim.robextourbillon');
+  await edge.webContents.executeJavaScript('document.querySelector("iframe").__smokeToken = "clock-before-controller-close"');
   const oldControllerId = controller.id;
   await command(controller, 'close');
   await until(() => controller.isDestroyed(), 'controller close');
   assert.equal(BrowserWindow.getAllWindows().length, 1);
   assert.equal(role('edge').id, edgeId);
-  await animated(edge, restored);
+  const closedBaseline = await frame(edge);
+  assert.equal(closedBaseline.token, 'clock-before-controller-close');
+  const closedAnimated = await animated(edge, closedBaseline);
+  assert.equal(closedAnimated.token, closedBaseline.token);
+  assert.equal(role('edge').id, edgeId);
+  assert.equal(role('controller'), undefined);
+  report.closedControllerAnimation = { edgeId, sameWidgetFrame: true,
+    baselineRotation: closedBaseline.rotation, laterRotation: closedAnimated.rotation };
   app.emit('activate'); app.emit('activate');
   const reopened = await until(() => role('controller'), 'controller recreation');
   assert.equal(await reopened.presentationReady, true);

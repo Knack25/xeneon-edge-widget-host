@@ -1,6 +1,6 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { runOwnedChild } = require('./smoke-child');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -18,16 +18,10 @@ function portOpen() {
 }
 async function run() {
   if (await portOpen()) throw new Error('Port 8080 is occupied; smoke will not stop another app or service.');
-  const code = await new Promise((resolve, reject) => {
-    const child = spawn(require('electron'), [path.join(__dirname, '../tests/electron-smoke.js')], {
+  const code = await runOwnedChild(require('electron'), [path.join(__dirname, '../tests/electron-smoke.js')], {
+    spawnOptions: {
       cwd: path.join(__dirname, '..'), env, stdio: 'inherit', windowsHide: true
-    });
-    const timeout = setTimeout(() => {
-      console.error('Electron smoke test exceeded 90 seconds');
-      child.kill(); // Only this test-owned child.
-    }, 90000);
-    child.once('error', error => { clearTimeout(timeout); reject(error); });
-    child.once('exit', result => { clearTimeout(timeout); resolve(result); });
+    }
   });
   if (code !== 0) throw new Error('Electron smoke failed (exit ' + code + ')');
   if (await portOpen()) throw new Error('Application quit left port 8080 listening.');
