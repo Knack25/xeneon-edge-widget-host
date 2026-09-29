@@ -15,7 +15,8 @@ or skips. It ran with loopback permission for the web-server cases.
 `node --check tests/electron-smoke.js`,
 `node --check scripts/run-smoke.js` and `git diff --check`: PASS.
 
-`npm run test:smoke`: PASS at 2026-09-29T18:07:39.686Z. The runner
+`npm run test:smoke`: PASS at 2026-09-29T18:15:00.091Z after the
+Task 6 evidence review. The runner
 checked that port 8080 was free before launching. It created one isolated
 `artifacts/smoke-profile-*` userData directory, ran an exercise phase,
 closed its Electron child/server, reopened the same isolated profile for a
@@ -34,18 +35,23 @@ The real Electron scenario observed:
 - Production migration of an isolated version 1 profile to version 2,
   retaining its page ID, active setting and remembered inactive-widget setting.
 - An Edge numbered-button mouse selection; two real Doodle canvases received
-  different mouse strokes. The sampled pixels stayed distinct on A→B→A,
+  different mouse strokes. The sampled pixels stayed distinct on
+  A→B→A→B→A; B's stroke was sampled again after switching back to B,
   while native Electron frame tree IDs stayed [3, 4] and the Edge window
   remained fullscreen.
-- Full-size inactive frames with `inert` and `aria-hidden`; Tab did not
-  focus the inactive page. An inactive timer counter reached 11 ticks during
+- Both inactive frames retained the full display width and height with
+  `inert` and `aria-hidden`; Tab did not focus the inactive page. An inactive
+  timer counter reached 11 ticks during
   the observation window. This records execution, not an exact cadence
   guarantee or absence of throttling.
 - All six saved navigation positions, including cluster bounds and placement,
   while the full-size widget frame and native Edge window ID stayed stable.
 - Active-page deletion removed its frame and selected the previous page.
-  A controlled widget load failure left the prior page visible with a
-  controller diagnostic. Same-ID Doodle re-import refreshed the active
+  A controlled first visit to a different, unvisited failing page kept
+  Original presented while Failure was requested. The controller named both
+  pages in its diagnostic; the Edge button for Original stayed current and
+  the Failure button carried the requested marker. The prior Doodle frame
+  remained interactive. Same-ID Doodle re-import refreshed the active
   instance and invalidated an inactive one until its next visit. The test
   supplies a fixed folder path to the production import flow; it does not
   exercise a human choice in the native directory picker.

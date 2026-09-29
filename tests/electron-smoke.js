@@ -106,11 +106,11 @@ app.whenReady().then(async () => {
     'A unique physical XENEON Edge is required');
   const controller = await until(() => role('controller'), 'controller window');
   assert.equal(await controller.presentationReady, true);
-  const edge = await until(() => role('edge'), 'Edge window');
+  let edge = await until(() => role('edge'), 'Edge window');
   assert.equal(await edge.presentationReady, true);
   assert.equal(fullscreen(edge), true);
   assert.equal(await controller.webContents.executeJavaScript('document.querySelectorAll("iframe, webview").length'), 0);
-  const edgeId = edge.id;
+  let edgeId = edge.id;
   const migrated = await state(controller);
   assert.equal(migrated.state.version, 2);
   assert.equal(migrated.state.scene.pages[0].id, phase === 'exercise' ? 'legacy-page' : report.pages.secondId);
@@ -170,6 +170,8 @@ app.whenReady().then(async () => {
   const inactive = await pageFrame(edge, 'legacy-page');
   assert.equal(inactive.inert, true);
   assert.equal(inactive.ariaHidden, 'true');
+  assert.equal(inactive.width, first.viewportWidth);
+  assert.equal(inactive.height, first.viewportHeight);
   await query(edge, 'document.querySelector("#page-navigation button")?.focus()');
   edge.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
   edge.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
@@ -178,11 +180,22 @@ app.whenReady().then(async () => {
   const returned = await loaded(controller, edge, 'legacy-page');
   assert.ok(returned.a[3] > 0);
   assert.equal(returned.b[3], 0);
-  assert.deepEqual(nativeFrameIds(edge), initialIds, 'native frame IDs survive A-B-A');
+  const inactiveSecond = await pageFrame(edge, secondId);
+  assert.equal(inactiveSecond.inert, true);
+  assert.equal(inactiveSecond.width, first.viewportWidth);
+  assert.equal(inactiveSecond.height, first.viewportHeight);
+  await command(controller, 'selectPage', { pageId: secondId });
+  const returnedSecond = await loaded(controller, edge, secondId);
+  assert.ok(returnedSecond.b[3] > 0, 'B stroke survives switch-back');
+  assert.equal(returnedSecond.a[3], 0);
+  await command(controller, 'selectPage', { pageId: 'legacy-page' });
+  assert.ok((await loaded(controller, edge, 'legacy-page')).a[3] > 0);
+  assert.deepEqual(nativeFrameIds(edge), initialIds, 'native frame IDs survive A-B-A-B-A');
   assert.equal(edge.id, edgeId);
   assert.equal(fullscreen(edge), true);
   report.pages = { firstId: 'legacy-page', secondId, edgeButtonSelectedFirst: true, nativeFrameIds: initialIds,
-    distinctCanvasPixels: true, inactiveFrameTicksObserved: inactive.ticks,
+    distinctCanvasPixels: true, bothStrokesSurvivedReturn: true,
+    inactiveFramesFullSize: true, inactiveFrameTicksObserved: inactive.ticks,
     inactiveFrameTimerCadenceAsserted: false, inactiveTabFocusBlocked: true };
 
   const positions = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'];
@@ -224,17 +237,46 @@ app.whenReady().then(async () => {
   importFolder = source;
   const imported = await command(controller, 'importWidget');
   assert.equal(imported.status, 'installed');
-  await command(controller, 'selectWidget', { pageId: 'legacy-page', widgetId: 'com.smoke.failure' });
+  const beforeFailureEdgeId = edge.id;
+  await command(controller, 'setEdgeVisible', false);
+  await until(() => edge.isDestroyed() && !role('edge'), 'hide before unvisited failure page setup');
+  const failurePage = await command(controller, 'createPage', { name: 'Failure' });
+  const failurePageId = failurePage.state.scene.activePageId;
+  await command(controller, 'selectWidget', { pageId: failurePageId, widgetId: 'com.smoke.failure' });
+  await command(controller, 'selectPage', { pageId: 'legacy-page' });
+  await command(controller, 'setEdgeVisible', true);
+  edge = await until(() => role('edge'), 'Edge restored for failed first visit');
+  edgeId = edge.id;
+  assert.notEqual(edgeId, beforeFailureEdgeId);
+  await loaded(controller, edge, 'legacy-page');
+  assert.equal((await pageFrame(edge, failurePageId)).exists, false, 'failure page has not yet visited Edge');
+  await command(controller, 'selectPage', { pageId: failurePageId });
   const failure = await until(async () => {
     const value = await state(controller);
     return value.edge.loadStatus === 'failed' ? value : false;
   }, 'controlled widget load failure');
+  assert.equal(failure.state.scene.activePageId, failurePageId);
   assert.equal(failure.edge.presentedPageId, 'legacy-page');
-  assert.equal((await pageFrame(edge, 'legacy-page')).canvas, true, 'previous Doodle remains visible');
+  const retained = await pageFrame(edge, 'legacy-page');
+  assert.equal(retained.canvas, true, 'previous Doodle remains available');
+  assert.equal(retained.inert, false, 'previous Doodle remains interactive');
+  assert.notEqual((await pageFrame(edge, failurePageId)).live, true, 'failed page was not presented');
   const diagnostic = await controller.webContents.executeJavaScript('document.getElementById("status").textContent');
   assert.match(diagnostic, /previous widget retained/);
-  report.failedWidget = { priorPageVisible: true, controllerDiagnostic: diagnostic };
-  await command(controller, 'selectWidget', { pageId: 'legacy-page', widgetId: doodleId });
+  assert.match(diagnostic, /Requested Failure; showing Original/);
+  const failureButtons = await query(edge, `
+    const buttons = [...document.querySelectorAll('#page-navigation button')];
+    const original = buttons.find(button => button.title === 'Original');
+    const failed = buttons.find(button => button.title === 'Failure');
+    return { presented: original?.getAttribute('aria-current'),
+      failedPresented: failed?.getAttribute('aria-current'), failedRequested: failed?.getAttribute('data-loading') };
+  `);
+  assert.deepEqual(failureButtons, { presented: 'page', failedPresented: null, failedRequested: 'true' });
+  report.failedPage = { requestedPageId: failurePageId, presentedPageId: 'legacy-page',
+    priorPageVisible: true, controllerDiagnostic: diagnostic, buttonState: failureButtons };
+  await command(controller, 'deletePage', { pageId: failurePageId });
+  await until(async () => !(await pageFrame(edge, failurePageId)).exists, 'failed page frame removed');
+  await command(controller, 'selectPage', { pageId: 'legacy-page' });
   await loaded(controller, edge, 'legacy-page');
 
   importFolder = path.join(__dirname, '../widgets/Doodle Pad-1');
