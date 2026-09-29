@@ -147,6 +147,8 @@ function jsonForScript(value) {
 }
 
 function buildShimScript(widget) {
+  // The dedicated Edge uses widget-runtime.js with shared widget-settings.js
+  // defaults. Keep this legacy page compatible until Task 8 removes it.
   const widgetId = String(widget.manifest.id || '').toLowerCase();
   const isVu = widgetId.includes('vumeter');
   const isSpectrum = widgetId.includes('spectrum');
