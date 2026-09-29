@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/start-electron.js .",
     "web": "node web-server.js",
-    "test": "node --test tests/page-model.test.js tests/app-state.test.js tests/display-policy.test.js tests/widget-library.test.js tests/web-server.test.js tests/app-coordinator.test.js tests/ipc-contract.test.js tests/main.test.js tests/controller-view.test.js tests/widget-runtime.test.js tests/scene-runtime.test.js tests/page-navigation.test.js tests/presentation.test.js tests/smoke-child.test.js",
+    "test": "node --test tests/page-model.test.js tests/app-state.test.js tests/display-policy.test.js tests/widget-library.test.js tests/web-server.test.js tests/app-coordinator.test.js tests/ipc-contract.test.js tests/main.test.js tests/controller-view.test.js tests/controller-pages.test.js tests/widget-runtime.test.js tests/scene-runtime.test.js tests/page-navigation.test.js tests/presentation.test.js tests/smoke-child.test.js",
     "test:smoke": "node scripts/run-smoke.js"
   },
   "repository": {

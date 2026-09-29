@@ -4,7 +4,12 @@
   const array = value => Array.isArray(value) ? value : [];
   function buildControllerViewModel(snapshot) {
     const state = snapshot.state || {};
-    const region = state.scene?.pages?.[0]?.regions?.[0] || {};
+    const scene = state.scene || {};
+    const sourcePages = array(scene.pages);
+    const activePageId = scene.activePageId || sourcePages[0]?.id || null;
+    const activePage = sourcePages.find(page => page.id === activePageId) || sourcePages[0] || {};
+    const region = activePage.regions?.[0] || {};
+    const pages = sourcePages.map((page, index) => ({ id: page.id, name: text(page.name, `Page ${index + 1}`), active: page.id === activePageId, number: index + 1 }));
     const activeWidgetId = region.widgetId ?? snapshot.edge?.widgetId ?? null;
     const widgets = (snapshot.widgets || []).map(widget => {
       const raw = widget.manifest || {};
@@ -17,8 +22,13 @@
     if (edge.loadStatus === 'loading') message += ' · Loading widget';
     if (edge.loadStatus === 'failed') message += ` · Widget failed to prepare${edge.retainedWidgetId ? '; previous widget retained' : ''}`;
     if (edge.error) message += ` · ${edge.error}`;
+    if (edge.presentedPageId && edge.presentedPageId !== activePageId) {
+      const requested = pages.find(page => page.id === activePageId)?.name || 'requested page';
+      const presented = pages.find(page => page.id === edge.presentedPageId)?.name || 'previous page';
+      message += ` · Requested ${requested}; showing ${presented}`;
+    }
     if (snapshot.recovery?.status === 'recovered') message += ' · State recovered from invalid persisted data; original configuration preserved';
-    return { revision: snapshot.revision, widgets, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (snapshot.selectedTargetDisplayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };
+    return { revision: snapshot.revision, widgets, pages, activePageId, navigationPosition: scene.navigationPosition || 'bottom-right', canAddPage: pages.length < 12, canDeletePage: pages.length > 1, presentedPageId: edge.presentedPageId || null, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (snapshot.selectedTargetDisplayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };
   }
   const api = { buildControllerViewModel };
   if (typeof module === 'object' && module.exports) module.exports = api;

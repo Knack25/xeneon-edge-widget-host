@@ -14,11 +14,13 @@
     const el = id => document.getElementById(id);
     let model = null;
     let settingsId;
+    let settingsPageId;
     let settingsAvailable;
     const controls = new Map();
     let pendingToken = null;
     let importBusy = false;
     let unsubscribe;
+    let deletePageId = null;
     function error(err) { el('error').textContent = err?.message || String(err); el('error').hidden = false; }
     async function command(action) {
       try { return await action(); } catch (err) { error(err); return null; }
@@ -41,15 +43,18 @@
           image.addEventListener('error', () => { image.hidden = true; }); card.append(image);
         }
         const caption = node('div'); caption.append(node('strong', widget.name), node('small', `${widget.version} · ${widget.author}${widget.active ? ' · Active' : ''}`)); card.append(caption);
-        card.addEventListener('click', () => command(() => bridge.selectWidget(widget.id)));
+        const pageId = model.activePageId;
+        card.addEventListener('click', () => command(() => bridge.selectWidget({ pageId, widgetId: widget.id })));
         return card;
       });
       el('widget-list').replaceChildren(...(cards.length ? cards : [node('p', query ? 'No matching widgets.' : 'No widgets found. Import a widget folder to begin.')]));
     }
     function renderSettings() {
       const widget = model.activeWidget;
-      if (settingsId !== model.activeWidgetId || settingsAvailable !== Boolean(widget)) {
-        settingsId = model.activeWidgetId; settingsAvailable = Boolean(widget); controls.clear();
+      if (settingsId !== model.activeWidgetId || settingsPageId !== model.activePageId || settingsAvailable !== Boolean(widget)) {
+        settingsId = model.activeWidgetId; settingsPageId = model.activePageId; settingsAvailable = Boolean(widget); controls.clear();
+        const pageId = model.activePageId;
+        const widgetId = model.activeWidgetId;
         const rows = widget ? settingsApi.getSettingDefinitions(widget).map(def => {
           const label = node('label', undefined, 'setting-row');
           const input = node('input'); input.type = def.type; input.dataset.setting = def.name;
@@ -58,7 +63,7 @@
           input.addEventListener('input', () => {
             const value = def.type === 'checkbox' ? input.checked : def.type === 'range' ? Number(input.value) : input.value;
             output.textContent = def.type === 'range' ? String(value) : '';
-            command(() => bridge.updateSetting(def.name, value));
+            command(() => bridge.updateSetting({ pageId, widgetId, name: def.name, value }));
           });
           controls.set(def.name, { input, output, def });
           return label;
@@ -74,6 +79,44 @@
         output.textContent = def.type === 'range' ? String(values[name]) : '';
       }
     }
+    function validPageName() {
+      const name = el('page-name').value.trim();
+      if (name.length < 1 || name.length > 80) {
+        el('page-error').textContent = 'Page name must contain 1–80 trimmed characters.';
+        el('page-error').hidden = false;
+        return null;
+      }
+      el('page-error').hidden = true;
+      return name;
+    }
+    function renderPages(previousPageId) {
+      const buttons = model.pages.map(page => {
+        const button = node('button', page.name, `page-item${page.active ? ' active' : ''}`);
+        button.type = 'button'; button.dataset.pageId = page.id;
+        button.setAttribute('aria-pressed', String(page.active));
+        button.addEventListener('click', () => command(() => bridge.selectPage({ pageId: page.id })));
+        return button;
+      });
+      el('page-list').replaceChildren(...buttons);
+      const index = model.pages.findIndex(page => page.id === model.activePageId);
+      el('page-add').disabled = !model.canAddPage;
+      el('page-rename').disabled = index < 0;
+      el('page-delete').disabled = !model.canDeletePage;
+      el('page-up').disabled = index <= 0;
+      el('page-down').disabled = index < 0 || index >= model.pages.length - 1;
+      if (previousPageId !== model.activePageId && document.activeElement !== el('page-name')) {
+        el('page-name').value = model.pages[index]?.name || '';
+        el('page-error').hidden = true;
+      }
+      const presets = [
+        ['top-left', 'Top left'], ['top-center', 'Top center'], ['top-right', 'Top right'],
+        ['bottom-left', 'Bottom left'], ['bottom-center', 'Bottom center'], ['bottom-right', 'Bottom right']
+      ];
+      if (!el('navigation-position').children.length) {
+        el('navigation-position').replaceChildren(...presets.map(([value, label]) => { const option = node('option', label); option.value = value; return option; }));
+      }
+      if (document.activeElement !== el('navigation-position')) el('navigation-position').value = model.navigationPosition;
+    }
     function renderDisplays() {
       if (document.activeElement === el('display')) return;
       const options = [node('option', 'Automatic XENEON Edge')]; options[0].value = 'automatic';
@@ -82,12 +125,13 @@
       el('display').replaceChildren(...options); el('display').value = String(model.displayValue);
     }
     function render(snapshot) {
+      const previousPageId = model?.activePageId;
       model = viewApi.buildControllerViewModel(snapshot);
       el('status').textContent = model.edge.message;
       const hide = model.visible && model.edge.status !== 'failed';
       el('visibility').textContent = hide ? 'Hide Edge' : 'Show Edge';
       el('visibility').disabled = model.edge.actionDisabled;
-      renderDisplays(); renderLibrary();
+      renderDisplays(); renderPages(previousPageId); renderLibrary();
       const widget = model.activeWidget;
       el('widget-title').textContent = widget ? widget.name : model.activeWidgetId ? `Unavailable widget: ${model.activeWidgetId}` : 'Select a widget';
       const metadata = [];
@@ -103,6 +147,21 @@
       await command(() => confirm ? bridge.confirmImport(token) : bridge.cancelImport(token));
     }
     el('search').addEventListener('input', () => { if (model) renderLibrary(); });
+    el('page-add').addEventListener('click', () => { if (!model?.canAddPage) return; const name = validPageName(); if (name) command(() => bridge.createPage({ name })); });
+    el('page-rename').addEventListener('click', () => { const pageId = model?.activePageId; const name = validPageName(); if (pageId && name) command(() => bridge.renamePage({ pageId, name })); });
+    for (const [id, direction] of [['page-up', 'up'], ['page-down', 'down']]) el(id).addEventListener('click', () => { const pageId = model?.activePageId; if (pageId && !el(id).disabled) command(() => bridge.movePage({ pageId, direction })); });
+    el('page-delete').addEventListener('click', () => {
+      if (!model?.canDeletePage) return;
+      deletePageId = model.activePageId;
+      el('page-delete-warning').textContent = `Delete ${model.pages.find(page => page.id === deletePageId)?.name || 'this page'}? This discards its live widget state.`;
+      el('page-delete-dialog').showModal();
+    });
+    function dismissDelete() { deletePageId = null; if (el('page-delete-dialog').open) el('page-delete-dialog').close(); }
+    el('page-delete-cancel').addEventListener('click', dismissDelete);
+    el('page-delete-confirm').addEventListener('click', () => { const pageId = deletePageId; dismissDelete(); if (pageId) command(() => bridge.deletePage({ pageId })); });
+    el('page-delete-dialog').addEventListener('cancel', event => { event.preventDefault(); dismissDelete(); });
+    el('page-delete-dialog').addEventListener('close', () => { deletePageId = null; });
+    el('navigation-position').addEventListener('change', () => { const position = el('navigation-position').value; command(() => bridge.setNavigationPosition({ position })); });
     el('display').addEventListener('change', () => { const value = el('display').value; if (value) command(() => bridge.selectDisplay(value === 'automatic' ? value : Number(value))); });
     el('visibility').addEventListener('click', () => { if (model) command(() => bridge.setEdgeVisible(!(model.visible && model.edge.status !== 'failed'))); });
     el('rescan').addEventListener('click', () => command(() => bridge.rescanWidgets()));
