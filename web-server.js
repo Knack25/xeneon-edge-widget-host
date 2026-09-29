@@ -3,7 +3,6 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { URL } = require('url');
 
 const ROOT = __dirname;
 const WIDGETS = path.join(ROOT, 'widgets');
@@ -54,16 +53,16 @@ function toWebPath(...parts) {
   return parts.map(part => String(part).replace(/\\/g, '/')).join('/');
 }
 
-function handleWidgetsApi(res) {
+function handleWidgetsApi(res, widgetsRoot = WIDGETS) {
   const entries = [];
-  if (fs.existsSync(WIDGETS)) {
-    const folders = fs.readdirSync(WIDGETS, { withFileTypes: true })
+  if (fs.existsSync(widgetsRoot)) {
+    const folders = fs.readdirSync(widgetsRoot, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
       .map(entry => entry.name)
       .sort((a, b) => a.localeCompare(b));
 
     for (const folder of folders) {
-      const folderPath = path.join(WIDGETS, folder);
+      const folderPath = path.join(widgetsRoot, folder);
       const indexPath = path.join(folderPath, 'index.html');
       if (!fs.existsSync(indexPath)) continue;
 
@@ -81,35 +80,21 @@ function handleWidgetsApi(res) {
   sendJson(res, entries);
 }
 
-function resolveStaticPath(requestPath) {
-  let decodedPath;
-  try {
-    decodedPath = decodeURIComponent(requestPath);
-  } catch {
-    return null;
-  }
-
-  const normalizedPath = path.normalize(decodedPath).replace(/^(\.\.[/\\])+/, '');
-  const relativePath = normalizedPath === path.sep || normalizedPath === '.'
-    ? 'index.html'
-    : normalizedPath.replace(/^[/\\]+/, '');
-  const resolved = path.resolve(ROOT, relativePath);
-  const relative = path.relative(ROOT, resolved);
-
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return resolved;
+function inside(root, target) {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
-
-function serveStatic(req, res, pathname) {
-  let filePath = resolveStaticPath(pathname);
-  if (!filePath) {
-    send(res, 400, 'Bad request', { 'Content-Type': 'text/plain; charset=utf-8' });
-    return;
-  }
-
+function serveStatic(req, res, pathname, routes) {
+  const route = routes.find(item => pathname === item.baseUrl || pathname.startsWith(`${item.baseUrl}/`)) || routes[routes.length - 1];
+  const relative = pathname.slice(route.baseUrl.length).replace(/^\/+/, '') || 'index.html';
+  let filePath = path.resolve(route.root, relative);
+  if (!inside(route.root, filePath)) return send(res, 400, 'Bad request');
   try {
+    filePath = fs.realpathSync(filePath);
+    if (!inside(route.root, filePath)) return send(res, 400, 'Bad request');
     const stat = fs.statSync(filePath);
-    if (stat.isDirectory()) filePath = path.join(filePath, 'index.html');
+    if (stat.isDirectory()) filePath = fs.realpathSync(path.join(filePath, 'index.html'));
+    if (!inside(route.root, filePath)) return send(res, 400, 'Bad request');
   } catch {
     send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
     return;
@@ -128,28 +113,50 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function createServer() {
+function createServer(options = {}) {
+  const root = fs.realpathSync(options.root || ROOT);
+  const library = options.widgetLibrary;
+  const routes = library ? library.getServingRoots().map(route => ({ ...route, root: fs.existsSync(route.root) ? fs.realpathSync(route.root) : path.resolve(route.root) })) : [{ baseUrl: '/widgets', root: fs.existsSync(path.join(root, 'widgets')) ? fs.realpathSync(path.join(root, 'widgets')) : path.join(root, 'widgets') }];
+  routes.push({ baseUrl: '', root });
   return http.createServer((req, res) => {
-    const url = new URL(req.url, `http://${HOST}:${PORT}`);
+    let pathname;
+    try {
+      // Inspect the raw path before URL normalization can erase dot segments.
+      pathname = decodeURIComponent(req.url.split('?')[0]);
+      if (!pathname.startsWith('/') || pathname.includes('\0') || pathname.includes('\\') || pathname.split('/').some(segment => segment === '..' || segment === '.')) throw new Error('Invalid path');
+    } catch { send(res, 400, 'Bad request'); return; }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       send(res, 405, 'Method not allowed', { 'Content-Type': 'text/plain; charset=utf-8' });
       return;
     }
 
-    if (url.pathname === '/api/widgets') {
-      handleWidgetsApi(res);
+    if (pathname === '/api/widgets') {
+      try {
+        if (library) sendJson(res, library.scan());
+        else handleWidgetsApi(res, path.join(root, 'widgets'));
+      } catch { send(res, 500, 'Widget catalog unavailable'); }
       return;
     }
 
-    serveStatic(req, res, url.pathname);
+    if (library && (pathname === '/managed-widgets' || pathname.startsWith('/managed-widgets/'))) {
+      try {
+        const published = library.scan().some(entry => {
+          const baseUrl = decodeURIComponent(entry.baseUrl);
+          return entry.source === 'managed' && (pathname === baseUrl || pathname.startsWith(`${baseUrl}/`));
+        });
+        if (!published) return send(res, 404, 'Not found');
+      } catch { return send(res, 500, 'Widget catalog unavailable'); }
+    }
+
+    serveStatic(req, res, pathname, routes);
   });
 }
 
 function startServer(options = {}) {
   const host = options.host || HOST;
   const port = options.port || PORT;
-  const server = createServer();
+  const server = createServer(options);
 
   if (typeof options.onError === 'function') {
     server.on('error', options.onError);
