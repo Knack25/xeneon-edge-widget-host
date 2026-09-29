@@ -63,9 +63,12 @@ Doodle drawing without recreating the frame. Inactive frames stay full-size but
 cannot receive pointer or keyboard input. They can still use CPU, timers or
 audio, and timer cadence may be throttled. Hide/Show, display disconnect, renderer
 crash and quit can destroy those frames. Widget-owned persistence then determines
-what survives. Widgets using same-origin localStorage or cookies share that
-storage across pages; this host does not isolate or promise distinct saved Doodle
-documents across app restarts.
+what survives. Bundled and managed Doodle versions are given page-scoped storage
+identities: each page saves its own drawing across app restarts. The first Doodle
+page opened after upgrading receives the one historical shared drawing; other
+new Doodle pages start blank. This cannot reconstruct drawings already
+overwritten in the old shared key. Other widgets using same-origin localStorage
+or cookies may still share storage across pages; this host does not isolate them.
 
 Closing the controller leaves the Edge and application-owned loopback server
 running. Clicking the Dock icon recreates or focuses the controller. **Hide Edge**
@@ -171,7 +174,7 @@ multi-page scenario starts from a version 1 profile, draws into two live Doodle
 frames using Electron mouse events, checks switch-back pixels and native frame
 IDs, records inactive timer activity, checks keyboard exclusion and all six
 button positions, then relaunches the same isolated profile to check persisted
-page/order/setting/position. It also checks a controlled failed widget, deletion,
+page/order/setting/position and both Doodle drawings. It also checks a controlled failed widget, deletion,
 re-import invalidation, controller recreation, Hide/Show and Edge reload. Its
 app.quit path is shared with Command-Q; it does not physically press the shortcut.
 The current multi-page smoke passed after port 8080 became free; see the

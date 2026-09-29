@@ -20,15 +20,20 @@ settings, visibility, display preference and controller bounds. A version 1
 profile migrates its single page and remembered widget settings. State writes
 remain atomic with backup/recovery behavior for invalid data. The limit is
 12 pages, with names of 1–80 trimmed characters. Widget-authored localStorage
-and cookies remain shared by same-origin pages; separate host settings do not
-guarantee separate persisted Doodle documents after restart.
+and cookies remain shared by same-origin pages for arbitrary widgets. Doodle is
+the narrow exception: the host gives bundled and managed Doodle versions a
+page-scoped storage identity. One legacy shared drawing is copied to the first
+Doodle page opened; other Doodle pages start blank. Separate Doodle drawings
+were confirmed on the physical Edge through switching, re-import, Hide/Show,
+display reconnect and normal-profile restart. Storage-write failure remains a
+documented limitation; other widgets are not isolated.
 Unsupported future state versions show a read-only controller diagnostic and
 preserve the original file; controller close and quit still complete normally.
 
 ## Evidence and acceptance
 
 See [multi-page validation](docs/validation/2026-09-29-multi-page-macos.md)
-for the current Node suite, real Electron smoke and pending physical checklist.
+for the current Node suite, real Electron smoke and physical checklist.
 The smoke ran only after a fresh check found port 8080 free; it used an isolated
 profile and left the normal-profile app untouched. It passed both exercise and
 restart phases. Do not close, relaunch or disturb the normal-profile app for
@@ -36,18 +41,20 @@ future testing without the user's direction. Automated smoke does not establish
 physical multi-page acceptance.
 
 The [two-window validation](docs/validation/2026-09-22-two-window-macos.md)
-records user-confirmed behavior of the earlier build. Its touch, pointer,
-Dock, reconnect and Command-Q confirmations are historical for this branch;
-repeat them with the multi-page build. The current physical checklist is
-pending user confirmation. No merge, push or hardware acceptance is implied.
+records the earlier build. The multi-page build has now passed direct tap,
+pointer-return, drawing/scrolling, six-position, Dock, reconnect, restart,
+Hide/Show and re-import checks. The last-page deletion guard was left to
+automated tests to preserve user pages. A deliberately unavailable-widget page
+was verified in isolated Electron smoke, not the user's normal profile. The
+branch remains local, unmerged and unpushed.
 
 ## Next steps
 
 After changes, rerun `npm test`, and run `npm run test:smoke` only when port
 8080 is available. Inspect `artifacts/smoke-result.json` plus screenshots;
-diagnose failures and rerun affected checks. Ask the user to exercise the ordered physical
-checklist in the multi-page validation record on the XENEON Edge. Record only
-observed pass/fail results and deviations.
+diagnose failures and rerun affected checks. The current physical record is
+up-to-date except the intentionally unexercised unavailable-widget and
+last-page-guard cases.
 
 Keep the normal-profile state and existing MacXeneonEdgeTouchDriver setup.
 The smoke runner creates its own `artifacts/smoke-profile-*` userData, refuses
