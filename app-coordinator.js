@@ -110,18 +110,12 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     const state = stateStore.snapshot();
     const id = state.scene.activePageId;
     const widget = activeWidget();
-    const prior = pageLoads.get(id);
     edgeState.requestedPageId = id;
     currentRequestRevision = state.revision;
     if (!widget) {
       edgeState.loadStatus = 'failed';
       edgeState.error = `Widget unavailable: ${regionOf(state).widgetId}`;
       pageLoads.set(id, { status: 'failed', error: edgeState.error });
-    } else if (prior?.status === 'loaded' && prior.generation === pageGenerations.get(id)) {
-      edgeState.loadStatus = 'loaded';
-      edgeState.error = null;
-      edgeState.presentedPageId = id;
-      loadedWidgetId = widget.id;
     } else {
       edgeState.loadStatus = 'loading';
       edgeState.error = null;
@@ -423,7 +417,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     broadcastController(); return snapshot();
   }
 
-  function rescanWidgets() {
+  function scanWidgets(replacedWidgetId = null) {
     assertRunning();
     const catalog = widgetLibrary.scan().map(publicWidget);
     const before = new Map(widgets.map(widget => [widget.id, JSON.stringify(widget)]));
@@ -434,7 +428,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     let activeAffected = false;
     for (const page of stateStore.snapshot().scene.pages) {
       const id = page.regions[0].widgetId;
-      if (before.get(id) !== after.get(id)) {
+      if (id === replacedWidgetId || before.get(id) !== after.get(id)) {
         bumpGeneration(page.id);
         if (page.id === stateStore.snapshot().scene.activePageId) activeAffected = true;
       }
@@ -443,8 +437,11 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     broadcast(); return snapshot();
   }
 
+  function rescanWidgets() { return scanWidgets(); }
+
   function importResult(result) {
-    if (result.status === 'installed' || result.status === 'replaced') rescanWidgets();
+    if (result.status === 'installed') scanWidgets();
+    if (result.status === 'replaced') scanWidgets(result.entry.id);
     return result.entry ? { status: result.status, entry: publicWidget(result.entry) } : clone(result);
   }
 

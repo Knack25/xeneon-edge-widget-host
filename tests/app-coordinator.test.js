@@ -263,6 +263,43 @@ test('a late report from an earlier request cannot mark a newly requested visit 
   assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
 });
 
+test('returning to a cached page waits for Edge confirmation before changing presented status', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  r.coordinator.selectPage({ pageId: firstId });
+  const controllerState = r.controllers[0].messages.at(-1).value;
+  assert.equal(controllerState.edge.requestedPageId, firstId);
+  assert.equal(controllerState.edge.presentedPageId, secondId);
+  assert.equal(controllerState.edge.loadStatus, 'loading');
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, firstId);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
+});
+
+test('same-metadata managed widget replacement invalidates every page using its assets', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const first = writeWidget(r.temp, 'first-copy', 'copy');
+  assert.equal(r.coordinator.beginImport(first).status, 'installed');
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  r.coordinator.selectWidget({ pageId: firstId, widgetId: 'copy' });
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  const previous = r.coordinator.getScene().pageGenerations;
+  const staleReport = { ...report(r.coordinator), ok: true };
+  const replacement = writeWidget(r.temp, 'replacement-copy', 'copy');
+  fs.writeFileSync(path.join(replacement, 'index.html'), '<html>replacement assets</html>');
+  const pending = r.coordinator.beginImport(replacement);
+  assert.equal(pending.status, 'confirmation-required');
+  assert.equal(r.coordinator.confirmImport(pending.token).status, 'replaced');
+  const next = r.coordinator.getScene();
+  assert.ok(next.pageGenerations[firstId] > previous[firstId]);
+  assert.ok(next.pageGenerations[secondId] > previous[secondId]);
+  r.coordinator.reportLoadResult(staleReport);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loading');
+});
+
 test('migration merges inactive settings once and startup synchronizes the active cache', async t => {
   const r = fixture(t, { prepare: store => store.update(state => { state.scene.pages[0].regions[0].settings = { gain: 7 }; }) });
   await r.coordinator.start();
