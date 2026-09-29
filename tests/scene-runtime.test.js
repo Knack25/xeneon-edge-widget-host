@@ -121,6 +121,24 @@ test('same-page selection advances a pending load report to the latest request r
   assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 2, ok: true });
 });
 
+test('same-page selection waits for pending settings and reports a failure at the latest revision', async () => {
+  const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
+  const pendingUpdate = deferred();
+  f.runtimes[0].updateSettings = input => {
+    f.runtimes[0].updates.push(input);
+    return pendingUpdate.promise.then(value => value, error => {
+      f.runtimes[0].reports({ revision: input.revision, ok: false, message: 'settings failed' });
+      throw error;
+    });
+  };
+  const settingsChange = f.manager.receive(snapshot(2, 'A', ['A', 'B', 'C'], { settings: { A: { color: 'green' } } }));
+  await f.manager.receive(snapshot(3, 'A', ['A', 'B', 'C'], { settings: { A: { color: 'green' } } }));
+  assert.equal(f.reports.some(value => value.revision === 3 && value.ok), false);
+  pendingUpdate.reject(Error('settings failed'));
+  await settingsChange;
+  assert.deepEqual(f.reports.at(-1), { pageId: 'A', widgetId: 'doodle', generation: 1, revision: 3, ok: false, message: 'settings failed' });
+});
+
 test('reimport of the presented page stages replacement inside its existing runtime', async () => {
   const f = fixture(); const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
   const container = f.runtimes[0].container;

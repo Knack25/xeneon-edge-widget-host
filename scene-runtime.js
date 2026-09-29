@@ -32,6 +32,31 @@
       }).catch(() => {});
     }
 
+    async function updateSettings(entry, settings, revision) {
+      const operation = { revision, failureReported: false, message: null };
+      entry.settingsUpdate = operation;
+      try {
+        const result = await entry.runtime.updateSettings({ settings, revision });
+        if (entry.settingsUpdate !== operation || destroyed || entries.get(entry.pageId) !== entry) return;
+        entry.settingsUpdate = null;
+        if (operation.failureReported || result?.failed) {
+          entry.ready = false;
+          entry.failed = true;
+          await send(entry, { revision: entry.revision, ok: false, message: operation.message || 'Widget settings failed.' });
+          return;
+        }
+        if (result?.stale || result?.pending || !entry.ready) return;
+        if (requestedPageId === entry.pageId) await promote(entry, requestToken, entry.revision);
+        else await send(entry, { revision: entry.revision, ok: true });
+      } catch (error) {
+        if (entry.settingsUpdate !== operation || destroyed || entries.get(entry.pageId) !== entry) return;
+        entry.settingsUpdate = null;
+        entry.ready = false;
+        entry.failed = true;
+        await send(entry, { revision: entry.revision, ok: false, message: operation.message || error.message || String(error) });
+      }
+    }
+
     function makeEntry(page, widget, generation, revision) {
       const container = document.createElement('div');
       container.className = 'page-scene';
@@ -46,7 +71,7 @@
         signature: JSON.stringify(widget), generation, runtime: null, container,
         ready: false, failed: false, loading: null, loadSerial: 0,
         settingsKey: JSON.stringify(page.regions[0].settings), revision,
-        failureReported: false };
+        failureReported: false, settingsUpdate: null };
       entry.runtime = createRuntime({ container, report: result => {
         if (destroyed || entries.get(entry.pageId) !== entry) return;
         if (entry.loading && result.ok) return; // Success is reported only after visible promotion.
@@ -54,11 +79,19 @@
           entry.ready = false;
           entry.failed = true;
           if (entry.loading) entry.failureReported = true;
+          if (entry.settingsUpdate) {
+            if (result.revision === entry.settingsUpdate.revision) {
+              entry.settingsUpdate.failureReported = true;
+              entry.settingsUpdate.message = result.message;
+            }
+            return;
+          }
         } else if (!entry.loading) {
           entry.ready = true;
           entry.failed = false;
         }
-        void send(entry, result);
+        if (entry.settingsUpdate) return;
+        void send(entry, { ...result, revision: entry.revision });
       } });
       entries.set(page.id, entry);
       return entry;
@@ -163,12 +196,12 @@
           if (page.id === activePageId) activeSettingsChanged = true;
           entry.settingsKey = settingsKey;
           entry.revision = snapshot.revision;
-          work.push(Promise.resolve(entry.runtime.updateSettings({ settings, revision: snapshot.revision })).catch(() => {}));
+          work.push(updateSettings(entry, settings, snapshot.revision));
         }
       }
       const selected = entries.get(activePageId);
-      if (selected?.ready && requestedChanged) await promote(selected, token, snapshot.revision, !activeSettingsChanged);
-      else if (selected?.ready && !activeSettingsChanged && selected.lastReportedRevision !== snapshot.revision) {
+      if (selected?.ready && !selected.settingsUpdate && requestedChanged) await promote(selected, token, snapshot.revision, !activeSettingsChanged);
+      else if (selected?.ready && !selected.settingsUpdate && !activeSettingsChanged && selected.lastReportedRevision !== snapshot.revision) {
         await send(selected, { revision: snapshot.revision, ok: true });
       }
       await Promise.all(work);
