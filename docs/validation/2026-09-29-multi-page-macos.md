@@ -90,18 +90,18 @@ and deviations for each check:
 | # | Check | Current result |
 | --- | --- | --- |
 | 1 | Single-tap Edge buttons switch pages; pointer returns to the laptop and controls remain usable | PASS — user confirmed 2026-09-29: one tap on an Edge page button switches pages and returns pointer to its previous laptop position |
-| 2 | Two pages using Doodle retain different drawings and settings on switch-back | PARTIAL — user confirmed 2026-09-29 that background color does not follow between pages and a new mark drawn on already-loaded page A does not appear on page B. The previous build copied the initial canvas because both pages read the widget-ID localStorage key. Page-specific Doodle storage now passes Node tests and isolated Electron first-load/restart smoke, but normal-profile physical retest remains pending |
-| 3 | All six button positions are reachable and unobtrusive on the physical Edge | PARTIAL — user confirmed controller positioning works on 2026-09-29; individual reachability and unobtrusiveness of all six presets not yet confirmed |
-| 4 | Drawing, supported scrolling and widget controls work without accidental navigation | PENDING |
-| 5 | Add, rename, reorder, select and delete pages; last-page guard and deletion warning are understandable | PARTIAL — user confirmed multiple page creation, page switching and distinct widget selection per page on 2026-09-29; rename, reorder, delete and guards pending |
+| 2 | Two pages using Doodle retain different drawings and settings on switch-back | PASS — user confirmed 2026-09-29 that the second Doodle page starts blank, each page retains its own drawing and background color on switch-back, and both drawings/colors return to their respective pages after a normal-profile Command-Q/relaunch. Node tests and isolated Electron restart smoke also passed |
+| 3 | All six button positions are reachable and unobtrusive on the physical Edge | PASS — user confirmed 2026-09-29 that all six controller-selectable positions work on the physical Edge |
+| 4 | Drawing, supported scrolling and widget controls work without accidental navigation | PASS — user confirmed 2026-09-29 Doodle drawing, toolbar use and supported widget scrolling do not switch pages unexpectedly |
+| 5 | Add, rename, reorder, select and delete pages; last-page guard and deletion warning are understandable | PARTIAL — user confirmed 2026-09-29 multiple page creation, page switching, distinct widgets per page, rename/reorder with live Edge button updates, and Cancel/Confirm deletion of a disposable page without disturbing others. Physical last-page guard not exercised to preserve user's pages; automated guard test passes |
 | 6 | A failed/unavailable widget leaves prior content visible with a useful controller diagnostic | PENDING |
 | 7 | Re-import a widget and confirm active/inactive page behavior | PENDING |
-| 8 | Hide/Show Edge and verify page/setting restoration, with expected loss of runtime-only state | PENDING |
-| 9 | Disconnect/reconnect Edge while the controller remains usable | PENDING |
-| 10 | Close the controller and reopen it from the Dock without disturbing Edge | PENDING |
-| 11 | Native fullscreen still covers the Dock; controls remain tappable after focus restoration | PENDING |
-| 12 | Restart and verify page order, active page, placement and host settings | PENDING |
-| 13 | Command-Q closes both windows and port 8080 | PENDING |
+| 8 | Hide/Show Edge and verify page/setting restoration, with expected loss of runtime-only state | PASS — user confirmed 2026-09-29 Edge returns fullscreen to selected page with its background color and Doodle drawing intact. Doodle now persists the drawing per page; arbitrary widgets' runtime-only state is not guaranteed |
+| 9 | Disconnect/reconnect Edge while the controller remains usable | PASS — user confirmed 2026-09-29 controller remains usable and selected page returns fullscreen on Edge with its Doodle drawing intact after display reconnect |
+| 10 | Close the controller and reopen it from the Dock without disturbing Edge | PASS — user confirmed 2026-09-29 Edge keeps selected page after controller close; Dock activation reopens controller on laptop without changing Edge page |
+| 11 | Native fullscreen still covers the Dock; controls remain tappable after focus restoration | PASS — user confirmed 2026-09-29 Dock remains behind fullscreen Edge and page buttons remain tappable after interacting with the laptop controller |
+| 12 | Restart and verify page order, active page, placement and host settings | PASS — user confirmed 2026-09-29 active page, page order, button position, page-specific Doodle drawings and background colors restored after normal-profile relaunch |
+| 13 | Command-Q closes both windows and port 8080 | PASS — user confirmed both windows closed for normal-profile restart on 2026-09-29; `lsof -nP -iTCP:8080 -sTCP:LISTEN` found no listener before relaunch |
 
 Keep the existing touch-driver setup. Touch routing, driver cursor restoration
 and native Dock coverage require direct observation; automated mouse input and
