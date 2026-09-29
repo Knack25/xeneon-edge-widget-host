@@ -142,6 +142,21 @@ app.whenReady().then(async () => {
   assert.equal(secondInitial.height, secondInitial.viewportHeight);
   assert.equal((await pageFrame(edge, 'legacy-page')).inert, true);
   assert.equal((await pageFrame(edge, 'legacy-page')).ariaHidden, 'true');
+  // Execute in an actual widget child frame, not the Edge main frame. Legacy
+  // widgets share the DOM origin but must have no callable selection capability.
+  const widgetFrame = edge.webContents.mainFrame.frames[0];
+  const selectionAttack = await widgetFrame.executeJavaScript(`(async () => {
+    const exposed = typeof parent.icueEdge?.selectPage === 'function';
+    if (exposed) await parent.icueEdge.selectPage({ pageId: 'legacy-page' });
+    const button = [...parent.document.querySelectorAll('#page-navigation button')].find(item => item.title === 'Original');
+    button.click();
+    button.dispatchEvent(new parent.MouseEvent('click', { bubbles: true }));
+    return { exposed };
+  })()`);
+  await delay(150);
+  assert.equal(selectionAttack.exposed, false, 'widget cannot call parent page-selection bridge');
+  assert.equal((await state(controller)).state.scene.activePageId, secondId, 'widget synthetic clicks cannot select a page');
+  report.widgetSelectionBoundary = { callableBridgeAbsent: true, syntheticClicksRejected: true };
   const edgeButton = await query(edge, `
     const button = [...document.querySelectorAll('#page-navigation button')].find(item => item.title === 'Original');
     const r = button.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
@@ -182,6 +197,7 @@ app.whenReady().then(async () => {
   assert.equal(returned.b[3], 0);
   const inactiveSecond = await pageFrame(edge, secondId);
   assert.equal(inactiveSecond.inert, true);
+  assert.equal(inactiveSecond.ariaHidden, 'true');
   assert.equal(inactiveSecond.width, first.viewportWidth);
   assert.equal(inactiveSecond.height, first.viewportHeight);
   await command(controller, 'selectPage', { pageId: secondId });
@@ -325,7 +341,17 @@ app.whenReady().then(async () => {
   shown.webContents.reload();
   await reloaded;
   await loaded(reopened, shown, secondId);
-  report.edgeReload = { activePageRestored: true };
+  const reloadedButton = await until(async () => query(shown, `
+    const button = [...document.querySelectorAll('#page-navigation button')].find(item => item.title === 'Original');
+    if (!button) return null;
+    const r = button.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+  `), 'navigation restored after reload');
+  shown.webContents.sendInputEvent({ type: 'mouseDown', ...reloadedButton, button: 'left', clickCount: 1 });
+  shown.webContents.sendInputEvent({ type: 'mouseUp', ...reloadedButton, button: 'left', clickCount: 1 });
+  await loaded(reopened, shown, 'legacy-page');
+  await command(reopened, 'selectPage', { pageId: secondId });
+  await loaded(reopened, shown, secondId);
+  report.edgeReload = { activePageRestored: true, navigationRestoredAndClicked: true };
   assert.deepEqual((await state(reopened)).state.scene.pages.map(page => page.name), ['Second', 'Original']);
   assert.deepEqual(errors.filter(message => !message.includes('smoke expected failure')), [], 'unexpected renderer errors');
   report.rendererErrors = errors;

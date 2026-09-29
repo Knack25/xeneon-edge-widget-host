@@ -225,7 +225,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   }
 
   function saveControllerBounds(window) {
-    if (!live(window)) return;
+    if (!live(window) || stateStore.recoveryDiagnostic?.()?.status === 'read-only') return;
     const bounds = window.getBounds();
     if (JSON.stringify(bounds) === JSON.stringify(stateStore.snapshot().controllerBounds)) return;
     stateStore.update(state => { state.controllerBounds = clone(bounds); });

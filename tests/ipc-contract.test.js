@@ -128,12 +128,15 @@ function preload(name, isMainFrame = true) {
   const ipcRenderer = new EventEmitter(); const invocations = [], sends = [];
   ipcRenderer.invoke = (...args) => { invocations.push(args); return Promise.resolve('result'); };
   ipcRenderer.send = (...args) => sends.push(args);
-  let globalName, bridge;
+  let globalName, bridge, navigationBridge;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', name), 'utf8'), {
     process: { platform: 'darwin', isMainFrame },
-    require: () => ({ ipcRenderer, contextBridge: { exposeInMainWorld(name, value) { globalName = name; bridge = value; } } })
+    require: () => ({ ipcRenderer, contextBridge: {
+      exposeInMainWorld(name, value) { globalName = name; bridge = value; },
+      exposeInIsolatedWorld(world, name, value) { assert.equal(world, 1001); assert.equal(name, 'icueNavigation'); navigationBridge = value; }
+    } })
   });
-  return { ipcRenderer, invocations, sends, globalName, bridge };
+  return { ipcRenderer, invocations, sends, globalName, bridge, navigationBridge };
 }
 
 test('controller preload exposes task methods, validates subscriptions and removes listeners', async () => {
@@ -156,18 +159,30 @@ test('controller preload exposes task methods, validates subscriptions and remov
 test('Edge preload has only its scene/report methods and removable subscriptions', async () => {
   const r = preload('preload-edge.js');
   assert.equal(r.globalName, 'icueEdge');
-  assert.deepEqual(Object.keys(r.bridge).sort(), ['getScene', 'onScene', 'reportLoadResult', 'selectPage']);
+  assert.deepEqual(Object.keys(r.bridge).sort(), ['getScene', 'onScene', 'reportLoadResult']);
   await r.bridge.getScene(); await r.bridge.reportLoadResult({ revision: 3, ok: false });
-  await r.bridge.selectPage({ pageId: 'p2' });
-  assert.deepEqual(r.invocations, [['edge:get-scene'], ['edge:load-result', { revision: 3, ok: false }],
-    ['edge:select-page', { pageId: 'p2' }]]);
+  assert.deepEqual(r.invocations, [['edge:get-scene'], ['edge:load-result', { revision: 3, ok: false }]]);
   assert.throws(() => r.bridge.onScene('bad'), /callback/i);
   const unsubscribe = r.bridge.onScene(() => {}); unsubscribe();
-  assert.equal(r.ipcRenderer.listenerCount('edge:scene'), 0);
+  assert.equal(r.ipcRenderer.listenerCount('edge:scene'), 1); // Private navigation listener remains.
+});
+
+test('isolated navigation validates page IDs against the latest main-process scene', async () => {
+  const r = preload('preload-edge.js');
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 2, scene: { activePageId: 'a', pages: [{ id: 'a' }, { id: 'b' }] } });
+  await r.navigationBridge.selectPage({ pageId: 'b' });
+  assert.equal(r.invocations.at(-1)[0], 'edge:select-page');
+  assert.equal(r.invocations.at(-1)[1].pageId, 'b');
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 3, scene: { activePageId: 'a', pages: [{ id: 'a' }] } });
+  r.ipcRenderer.emit('edge:scene', {}, { revision: 2, scene: { activePageId: 'b', pages: [{ id: 'b' }] } });
+  await assert.rejects(r.navigationBridge.selectPage({ pageId: 'b' }), /Unknown page/);
+  await assert.rejects(r.navigationBridge.selectPage({ pageId: 'unknown' }), /Unknown page/);
+  assert.equal(r.invocations.length, 1);
 });
 
 test('preloads expose no host capability in widget subframes', () => {
   for (const file of ['preload-controller.js', 'preload-edge.js']) {
     assert.equal(preload(file, false).bridge, undefined);
+    assert.equal(preload(file, false).navigationBridge, undefined);
   }
 });

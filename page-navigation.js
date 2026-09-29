@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  function createPageNavigation({ document, onSelect }) {
+  function createPageNavigation({ document, onSelect, trustedInputOnly = false }) {
     const cluster = document.getElementById('page-navigation');
     let buttons = [], destroyed = false;
 
@@ -21,7 +21,10 @@
         if (item) previous.delete(page.id);
         else {
           const button = document.createElement('button');
-          const click = () => onSelect(page.id);
+          const click = event => {
+            if (trustedInputOnly && event?.isTrusted !== true) return;
+            onSelect(page.id);
+          };
           button.addEventListener('click', click);
           item = { id: page.id, button, click };
         }

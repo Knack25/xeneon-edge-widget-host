@@ -37,6 +37,23 @@ function snapshot(revision, activePageId, pages = ['A', 'B', 'C'], extras = {}) 
 }
 function finish(runtime, result = { stale: false, ok: true }) { runtime.loads.at(-1).gate.resolve(result); }
 
+test('returning to a pending B load promotes B for its newest request and reports only after presentation', async () => {
+  const f = fixture();
+  const initial = f.manager.receive(snapshot(1, 'A')); finish(f.runtimes[0]); await initial;
+  const pending = f.manager.receive(snapshot(2, 'B'));
+  await f.manager.receive(snapshot(3, 'A'));
+  await f.manager.receive(snapshot(4, 'B'));
+  assert.equal(f.runtimes[1].loads.length, 1);
+  assert.equal(f.reports.some(report => report.pageId === 'B' && report.ok), false);
+  finish(f.runtimes[1]); await pending;
+  assert.equal(f.presentations.at(-1).pageId, 'B');
+  assert.equal(f.runtimes[1].container.inert, false);
+  assert.equal(f.runtimes[0].container.inert, true);
+  assert.deepEqual(f.reports.at(-1), { pageId: 'B', widgetId: 'doodle', generation: 1, revision: 4, ok: true });
+  await f.manager.receive(snapshot(5, 'B'));
+  assert.equal(f.runtimes[1].container.inert, false);
+});
+
 test('visiting A to B to A retains exact runtimes and full-size offscreen containers', async () => {
   const f = fixture(); const first = f.manager.receive(snapshot(1, 'A')); assert.equal(f.runtimes.length, 1); finish(f.runtimes[0]); await first;
   const a = f.runtimes[0], aContainer = a.container;

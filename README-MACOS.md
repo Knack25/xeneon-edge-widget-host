@@ -118,12 +118,18 @@ bounds. Version 1 profiles migrate their single page and remembered widget
 settings. Bounds restore only when sufficiently
 visible on a connected non-Edge display; otherwise the controller centers on a
 safe display. Writes are debounced and atomically renamed, with a quit flush.
-Malformed JSON, unsupported versions, invalid known schema fields, and settings
+Malformed JSON, invalid known schema fields, and settings
 that normalization would lose are preserved byte-for-byte in a unique dated
 `state.json.corrupt-*` backup before safe normalized state is written. The
 controller reports recovery for that launch. Formatting changes and ignored
 extra metadata do not trigger recovery. Backup failure leaves the original file
 untouched and stops initialization.
+
+An unsupported future state version opens in read-only recovery. The original
+`state.json` stays byte-for-byte unchanged, edits are rejected, and the controller
+shows an unsupported-version notice. Closing the controller and quitting still
+work; controller bounds are not persisted in this mode. Use a compatible newer
+runner to resume editing that configuration.
 
 Legacy local-storage settings merge once. Their migration acknowledgement waits
 for a successful state-file flush before localStorage is removed. A failed write
@@ -143,6 +149,11 @@ one-use token and staged replacement with backup/rename rollback if promotion
 fails; settings for the ID are preserved. A confirmed bundled-ID import becomes
 a managed override with catalog precedence; bundled source files remain intact.
 Validation does not make arbitrary widget scripts safe: use trusted local widgets.
+Page-selection capability and button handlers run in an isolated Electron world,
+outside the widget-accessible main-world bridge. Only trusted native button input
+can select an Edge page; script calls and synthetic clicks cannot. Widgets retain
+their legacy same-origin DOM/storage access, so this is a narrow command boundary,
+not a full sandbox against hostile widgets or host DOM tampering.
 
 ## Verification and physical acceptance
 

@@ -10,6 +10,10 @@ buttons select pages in one of six saved positions. Page IDs survive rename and
 reorder. The Edge loads pages on first visit and retains visited frames until
 deletion, replacement or Edge destruction. A failed first visit keeps the
 previous page visible and reports the requested page in the controller.
+Pending preparation follows the latest request when revisiting a still-loading
+page. Edge selection runs in isolated world 1001 with trusted native button input;
+the main-world bridge has no page-selection method. Legacy widget DOM/storage
+access remains unchanged; this is not a hostile-widget sandbox.
 
 Version 2 state stores page order, active page ID, navigation position, page
 settings, visibility, display preference and controller bounds. A version 1
@@ -18,6 +22,8 @@ remain atomic with backup/recovery behavior for invalid data. The limit is
 12 pages, with names of 1–80 trimmed characters. Widget-authored localStorage
 and cookies remain shared by same-origin pages; separate host settings do not
 guarantee separate persisted Doodle documents after restart.
+Unsupported future state versions show a read-only controller diagnostic and
+preserve the original file; controller close and quit still complete normally.
 
 ## Evidence and acceptance
 
@@ -61,7 +67,7 @@ userData path semantics, lifecycle and limitations.
   invariants, state, commands and page load status.
 - `controller.html`, `controller.js`, `controller-view.js`,
   `preload-controller.js`: controller page controls and diagnostics.
-- `edge.html`, `edge.js`, `page-navigation.js`, `scene-runtime.js`,
+- `edge.html`, `edge.js`, `edge-navigation.js`, `page-navigation.js`, `scene-runtime.js`,
   `widget-runtime.js`: Edge buttons, lazy retained runtimes and staged loads.
 - `ipc-contract.js`, `preload-edge.js`, `window-factories.js`: sender
   boundaries and native presentation.

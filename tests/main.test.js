@@ -25,6 +25,11 @@ function nativeRuntime({ platform = 'darwin', loadGate, readyGate, loadError } =
       this.destroyed = false; this.actions = [];
       this.webContents = new EventEmitter(); this.webContents.mainFrame = {};
       this.webContents.send = () => {}; this.webContents.setWindowOpenHandler = fn => { this.openHandler = fn; };
+      this.webContents.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+        assert.equal(world, 1001);
+        assert.equal(scripts.length, 2);
+        this.navigationInitializations = (this.navigationInitializations || 0) + 1;
+      };
       windows.push(this);
     }
     async loadURL(url) {
@@ -32,6 +37,7 @@ function nativeRuntime({ platform = 'darwin', loadGate, readyGate, loadError } =
       const gate = typeof loadGate === 'function' ? loadGate(this) : loadGate;
       if (gate) await gate;
       if (loadError) throw loadError;
+      this.webContents.emit('did-finish-load');
       if (readyGate) readyGate.then(() => this.emit('ready-to-show'));
       else this.emit('ready-to-show');
     }
@@ -106,6 +112,16 @@ test('startup wires two isolated pages, durable state/library and the managed se
   assert.equal(state.state.scene.pages[0].regions[0].widgetId, 'com.shocksim.robextourbillon');
   assert.equal(state.widgets[0].id, 'com.shocksim.robextourbillon');
   assert.equal(r.handlers.has('presentation:control'), false);
+});
+
+test('Edge reload reinstalls isolated navigation without exposing it in the main world', async () => {
+  const r = nativeRuntime();
+  const window = r.factories().createEdgeWindow({ display: edge });
+  await window.presentationReady;
+  assert.equal(window.navigationInitializations, 1);
+  window.webContents.emit('did-finish-load');
+  await tick();
+  assert.equal(window.navigationInitializations, 2);
 });
 
 test('Edge page load failure reports the requested page and generation', async t => {

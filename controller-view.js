@@ -29,6 +29,7 @@
       message += presented ? ` · Requested ${requested}; showing ${presented}` : ` · Requested ${requested}; no page currently shown`;
     }
     if (snapshot.recovery?.status === 'recovered') message += ' · State recovered from invalid persisted data; original configuration preserved';
+    if (snapshot.recovery?.status === 'read-only') message += ' · Unsupported state version: read-only recovery; original configuration preserved';
     return { revision: snapshot.revision, widgets, pages, activePageId, navigationPosition: scene.navigationPosition || 'bottom-right', canAddPage: pages.length < 12, canDeletePage: pages.length > 1, presentedPageId: edge.presentedPageId || null, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (snapshot.selectedTargetDisplayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };
   }
   const api = { buildControllerViewModel };

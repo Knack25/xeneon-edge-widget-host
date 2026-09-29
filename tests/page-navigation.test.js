@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPageNavigation } = require('../page-navigation');
-const { createEdge } = require('../edge');
+const fs = require('node:fs');
+const vm = require('node:vm');
 
 class Element {
   constructor(tag) { this.tagName = tag; this.children = []; this.dataset = {}; this.style = {}; this.attributes = new Map(); this.listeners = new Map(); this.hidden = false; }
@@ -13,7 +14,7 @@ class Element {
   getAttribute(name) { return this.attributes.get(name); }
   addEventListener(name, listener) { this.listeners.set(name, listener); }
   removeEventListener(name, listener) { if (this.listeners.get(name) === listener) this.listeners.delete(name); }
-  click() { this.listeners.get('click')?.(); }
+  click(event) { this.listeners.get('click')?.(event); }
 }
 
 function fixture() {
@@ -80,33 +81,36 @@ test('destroy removes selection handlers and later renders do nothing', () => {
   assert.equal(f.cluster.children.length, 0);
 });
 
-test('Edge selection uses the bridge and active styling follows actual scene presentation', async () => {
+test('isolated Edge navigation accepts trusted clicks only and follows confirmed presentation', async () => {
   const f = fixture();
-  let present, receive, unsubscribe = false, destroyed = false;
+  let receive, unsubscribe = false, pagehide;
   const snapshots = [];
+  const state = { pages: f.pages, requestedPageId: 'stable-a', presentedPageId: null, position: 'bottom-right' };
   const bridge = {
-    onScene(fn) { receive = fn; return () => { unsubscribe = true; }; },
-    getScene: async () => ({ revision: 1, scene: { pages: f.pages, activePageId: 'stable-a', navigationPosition: 'bottom-right' } }),
-    selectPage: target => { snapshots.push(target); }
+    onState(fn) { receive = fn; return () => { unsubscribe = true; }; },
+    getState: async () => state,
+    selectPage: async target => { snapshots.push(target.pageId); }
   };
-  const edge = createEdge({ document: { getElementById: () => f.cluster, createElement: tag => new Element(tag) }, bridge,
-    sceneRuntimeFactory: ({ onPresentation }) => {
-      present = onPresentation;
-      return { receive() {}, destroy() { destroyed = true; } };
-    } });
-  await edge.start();
+  vm.runInNewContext(fs.readFileSync(require.resolve('../edge-navigation.js'), 'utf8'), {
+    icueNavigation: bridge, ICUEPageNavigation: { createPageNavigation },
+    document: { getElementById: () => f.cluster, createElement: tag => new Element(tag) },
+    addEventListener(name, fn) { assert.equal(name, 'pagehide'); pagehide = fn; }
+  });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.cluster.children[0].getAttribute('data-loading'), 'true');
-  present({ pageId: 'stable-a' });
+  receive({ ...state, presentedPageId: 'stable-a' });
   assert.equal(f.cluster.children[0].getAttribute('aria-current'), 'page');
-  f.cluster.children[1].click();
-  assert.deepEqual(snapshots, [{ pageId: 'stable-b' }]);
-  receive({ revision: 2, scene: { pages: f.pages, activePageId: 'stable-b', navigationPosition: 'top-left' } });
+  f.cluster.children[1].click(); f.cluster.children[1].click({ isTrusted: false });
+  assert.deepEqual(snapshots, []);
+  f.cluster.children[1].click({ isTrusted: true });
+  assert.deepEqual(snapshots, ['stable-b']);
+  receive({ ...state, requestedPageId: 'stable-b', presentedPageId: 'stable-a', position: 'top-left' });
   assert.equal(f.cluster.dataset.position, 'top-left');
   assert.equal(f.cluster.children[0].getAttribute('aria-current'), 'page');
   assert.equal(f.cluster.children[1].getAttribute('data-loading'), 'true');
-  present({ pageId: 'stable-b' });
+  receive({ ...state, requestedPageId: 'stable-b', presentedPageId: 'stable-b' });
   assert.equal(f.cluster.children[1].getAttribute('aria-current'), 'page');
-  edge.dispose();
-  assert.equal(unsubscribe, true); assert.equal(destroyed, true);
+  pagehide();
+  assert.equal(unsubscribe, true);
   assert.equal(f.cluster.children.length, 0);
 });

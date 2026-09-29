@@ -10,13 +10,13 @@ npm 11.19.1 and Electron 41.5.0. The real display report identifies
 the built-in Retina Display at (0, 0, 1440, 900), scale 2, and the
 XENEON EDGE at (-501, 900, 2560, 720), scale 1.
 
-`npm test`: PASS, 178/178 node:test cases, zero failures, cancellations
+`npm test`: PASS, 183/183 node:test cases, zero failures, cancellations
 or skips. It ran with loopback permission for the web-server cases.
 `node --check tests/electron-smoke.js`,
 `node --check scripts/run-smoke.js` and `git diff --check`: PASS.
 
-`npm run test:smoke`: PASS at 2026-09-29T18:15:00.091Z after the
-Task 6 evidence review. The runner
+`npm run test:smoke`: PASS at 2026-09-29T18:29:02.184Z after the
+whole-branch final fixes. The runner
 checked that port 8080 was free before launching. It created one isolated
 `artifacts/smoke-profile-*` userData directory, ran an exercise phase,
 closed its Electron child/server, reopened the same isolated profile for a
@@ -39,6 +39,11 @@ The real Electron scenario observed:
   A→B→A→B→A; B's stroke was sampled again after switching back to B,
   while native Electron frame tree IDs stayed [3, 4] and the Edge window
   remained fullscreen.
+- Script running in a real widget frame found no callable parent page-selection
+  bridge. Its `.click()` and dispatched synthetic click did not change the
+  requested page. Native mouse input on the same button still selected it.
+  Selection handlers and capability run in isolated world 1001; legacy widgets
+  still share the host DOM origin, so this does not claim hostile-widget sandboxing.
 - Both inactive frames retained the full display width and height with
   `inert` and `aria-hidden`; Tab did not focus the inactive page. An inactive
   timer counter reached 11 ticks during
@@ -56,7 +61,8 @@ The real Electron scenario observed:
   supplies a fixed folder path to the production import flow; it does not
   exercise a human choice in the native directory picker.
 - Controller close/reopen kept the same Edge window. Hide/Show recreated the
-  Edge and restored the active page; Edge reload restored it again.
+  Edge and restored the active page; Edge reload restored it again, including
+  navigation that was then exercised with a native mouse click.
   Restart restored active page, page order, navigation position and a
   page-specific setting. `app.quit` closed both isolated Electron runs and
   the loopback server. Physical Command-Q was not pressed.
@@ -65,6 +71,13 @@ The smoke observes canvas state within one running Edge window. Doodle uses
 same-origin widget storage, so this does not establish independent persisted
 documents across pages or preserve drawings through Hide/Show, reconnect,
 renderer crash or restart.
+
+Focused regressions first reproduced pending B→A→B preparation failing to
+promote, future-version controller close throwing before cleanup, and the missing
+read-only controller diagnostic. They now pass. Future-version recovery also
+verifies quit closes windows/server while preserving original state bytes.
+Self-review added a failing reload regression before the isolated-navigation
+reload fix. The real-frame selection bypass failed before its capability fix.
 
 ## Physical acceptance — pending
 

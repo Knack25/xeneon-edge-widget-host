@@ -139,7 +139,9 @@
         return;
       }
       entry.ready = true;
-      if (requestedPageId === entry.pageId && token === requestToken) await promote(entry, token, entry.revision);
+      // A retained preparation may be selected again (B -> A -> B) while it
+      // loads. Its identity/serial still match; promote for the latest request.
+      if (requestedPageId === entry.pageId) await promote(entry, requestToken, entry.revision);
     }
 
     async function receive(snapshot) {
@@ -202,7 +204,7 @@
       const selected = entries.get(activePageId);
       if (selected?.ready && !selected.settingsUpdate && requestedChanged) await promote(selected, token, snapshot.revision, !activeSettingsChanged);
       else if (selected?.ready && !selected.settingsUpdate && !activeSettingsChanged && selected.lastReportedRevision !== snapshot.revision) {
-        await send(selected, { revision: snapshot.revision, ok: true });
+        await promote(selected, token, snapshot.revision);
       }
       await Promise.all(work);
     }

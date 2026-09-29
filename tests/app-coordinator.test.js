@@ -98,6 +98,28 @@ test('closing controller leaves Edge and server alive; activate restores control
   await r.coordinator.activate(); assert.equal(r.controllers.length, 2); assert.equal(r.controllers[1].focused, true);
 });
 
+test('future-version recovery allows controller close and quit without changing persisted bytes', async t => {
+  const persisted = '{"version":99,"futureConfiguration":"keep exactly"}\n';
+  const r = fixture(t, { persisted }); await r.coordinator.start();
+  assert.doesNotThrow(() => r.controllers[0].close());
+  assert.equal(r.coordinator.getControllerWindow(), null);
+  assert.equal(r.edges[0].destroyed, false);
+  await r.coordinator.activate();
+  await r.coordinator.quit();
+  assert.equal(r.controllers[1].destroyed, true);
+  assert.equal(r.edges[0].destroyed, true);
+  assert.equal(r.server.closed, true);
+  assert.equal(fs.readFileSync(path.join(r.temp, 'state.json'), 'utf8'), persisted);
+});
+
+test('future-version recovery diagnostic reaches the controller view from the coordinator', async t => {
+  const r = fixture(t, { persisted: '{"version":99}' }); await r.coordinator.start();
+  const model = buildControllerViewModel(r.coordinator.snapshot());
+  assert.match(model.edge.message, /unsupported.*version/i);
+  assert.match(model.edge.message, /read.only/i);
+  assert.match(model.edge.message, /preserved/i);
+});
+
 test('activation waits for factory readiness and cannot show a replaced controller', async t => {
   const r = fixture(t); await r.coordinator.start();
   const old = r.controllers[0]; let ready;
