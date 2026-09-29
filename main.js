@@ -56,7 +56,10 @@ if (!fs.existsSync(webServerPath)) {
       createControllerWindow: options => createControllerWindow({ ...options, onLoadError: failStartup }),
       createEdgeWindow: options => createEdgeWindow({ ...options, onLoadError(error, window) {
         if (quitting || coordinator.getEdgeWindow() !== window) return;
-        coordinator.reportLoadResult({ revision: coordinator.getScene().revision, ok: false,
+        const scene = coordinator.getScene();
+        const pageId = scene.scene.activePageId;
+        coordinator.reportLoadResult({ pageId, widgetId: scene.scene.pages.find(page => page.id === pageId).regions[0].widgetId,
+          generation: scene.pageGenerations[pageId], revision: scene.revision, ok: false,
           message: `Edge page failed to load: ${error.message}` });
       } })
     });

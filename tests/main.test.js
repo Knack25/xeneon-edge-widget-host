@@ -108,6 +108,18 @@ test('startup wires two isolated pages, durable state/library and the managed se
   assert.equal(r.handlers.has('presentation:control'), false);
 });
 
+test('Edge page load failure reports the requested page and generation', async t => {
+  const r = await boot(t, { loadGate: win => /edge\.html$/.test(win.url) ?
+    Promise.reject(new Error('edge failed')) : null });
+  await tick();
+  const controller = r.windows[0];
+  const state = await r.handlers.get('app:get-state')({ sender: controller.webContents,
+    senderFrame: controller.webContents.mainFrame });
+  assert.equal(state.edge.loadStatus, 'failed');
+  assert.match(state.edge.error, /edge failed/);
+  assert.equal(state.edge.requestedPageId, state.state.scene.activePageId);
+});
+
 test('controller close and activation retain Edge and one application server', async t => {
   const r = await boot(t); r.windows[0].close();
   assert.equal(r.windows[1].isDestroyed(), false); assert.equal(r.quits(), 0);

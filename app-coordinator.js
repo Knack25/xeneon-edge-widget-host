@@ -1,9 +1,13 @@
 'use strict';
 const defaultDisplayPolicy = require('./display-policy');
+const { randomUUID } = require('node:crypto');
+const pageModel = require('./page-model');
+const { getDefaultWidgetSettings } = require('./widget-settings');
 
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const clone = value => JSON.parse(JSON.stringify(value));
-const regionOf = state => state.scene.pages[0].regions[0];
+const pageOf = state => pageModel.activePage(state.scene);
+const regionOf = state => pageOf(state).regions[0];
 const live = window => window && !window.isDestroyed();
 
 function safeName(value) {
@@ -41,20 +45,47 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   let recoveryAttempts = [];
   let recoveryFailed = false;
   let loadedWidgetId = null;
-  let edgeState = { status: 'hidden', displayId: null, loadStatus: 'idle', error: null, retainedWidgetId: null };
+  const pageGenerations = new Map();
+  const pageLoads = new Map();
+  let currentRequestRevision = 0;
+  let edgeState = { status: 'hidden', displayId: null, loadStatus: 'idle', error: null,
+    retainedWidgetId: null, requestedPageId: null, presentedPageId: null };
+
+  function syncPages() {
+    const pages = stateStore.snapshot().scene.pages;
+    const ids = new Set(pages.map(page => page.id));
+    for (const page of pages) if (!pageGenerations.has(page.id)) pageGenerations.set(page.id, 1);
+    for (const id of pageGenerations.keys()) if (!ids.has(id)) { pageGenerations.delete(id); pageLoads.delete(id); }
+  }
+
+  function bumpGeneration(pageId) {
+    syncPages();
+    pageGenerations.set(pageId, pageGenerations.get(pageId) + 1);
+    pageLoads.delete(pageId);
+  }
+
+  function pageWidget(page) {
+    return widgets.find(widget => widget.id === page.regions[0].widgetId) || null;
+  }
+
+  function pageLoadSnapshot() {
+    return Object.fromEntries([...pageLoads].map(([id, value]) => [id, { ...value }]));
+  }
 
   function assertRunning() {
     if (quitting) throw new Error('Application is quitting.');
   }
 
   function activeWidget() {
-    const id = regionOf(stateStore.snapshot()).widgetId;
-    return widgets.find(widget => widget.id === id) || null;
+    return pageWidget(pageOf(stateStore.snapshot()));
   }
 
   function getScene() {
     const state = stateStore.snapshot();
-    return clone({ revision: state.revision, scene: state.scene, widget: activeWidget(), catalogRevision });
+    syncPages();
+    return clone({ revision: state.revision, scene: state.scene, widget: activeWidget(), catalogRevision,
+      pageWidgets: Object.fromEntries(state.scene.pages.map(page => [page.id, pageWidget(page)])),
+      pageGenerations: Object.fromEntries(pageGenerations) });
   }
 
   function snapshot() {
@@ -63,7 +94,7 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
       recovery: stateStore.recoveryDiagnostic?.() || null,
       selectedTargetDisplayId: resolveTarget().display?.id ?? null,
       displays: screen.getAllDisplays().map(publicDisplay),
-      edge: { ...edgeState, widgetId: regionOf(state).widgetId } });
+      edge: { ...edgeState, widgetId: regionOf(state).widgetId, pageLoads: pageLoadSnapshot() } });
   }
 
   function broadcastController() {
@@ -76,21 +107,41 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   }
 
   function prepareLoad() {
-    edgeState.loadStatus = activeWidget() ? 'loading' : 'failed';
-    edgeState.error = activeWidget() ? null : `Widget unavailable: ${regionOf(stateStore.snapshot()).widgetId}`;
+    const state = stateStore.snapshot();
+    const id = state.scene.activePageId;
+    const widget = activeWidget();
+    const prior = pageLoads.get(id);
+    edgeState.requestedPageId = id;
+    currentRequestRevision = state.revision;
+    if (!widget) {
+      edgeState.loadStatus = 'failed';
+      edgeState.error = `Widget unavailable: ${regionOf(state).widgetId}`;
+      pageLoads.set(id, { status: 'failed', error: edgeState.error });
+    } else if (prior?.status === 'loaded' && prior.generation === pageGenerations.get(id)) {
+      edgeState.loadStatus = 'loaded';
+      edgeState.error = null;
+      edgeState.presentedPageId = id;
+      loadedWidgetId = widget.id;
+    } else {
+      edgeState.loadStatus = 'loading';
+      edgeState.error = null;
+      pageLoads.set(id, { status: 'loading', error: null, generation: pageGenerations.get(id) });
+    }
     edgeState.retainedWidgetId = edgeState.loadStatus === 'failed' ? loadedWidgetId : null;
   }
 
   function synchronizeActiveSettings() {
+    if (stateStore.recoveryDiagnostic?.()?.status === 'read-only') return;
     const state = stateStore.snapshot();
-    const region = regionOf(state);
+    const page = pageOf(state);
+    const region = page.regions[0];
     if (!safeName(region.widgetId)) return;
-    const settings = { ...state.widgetSettings[region.widgetId], ...region.settings };
+    const settings = { ...page.widgetSettings[region.widgetId], ...region.settings };
     if (JSON.stringify(settings) === JSON.stringify(region.settings) &&
-      JSON.stringify(settings) === JSON.stringify(state.widgetSettings[region.widgetId])) return;
+      JSON.stringify(settings) === JSON.stringify(page.widgetSettings[region.widgetId])) return;
     stateStore.update(draft => {
       regionOf(draft).settings = settings;
-      draft.widgetSettings[region.widgetId] = settings;
+      pageOf(draft).widgetSettings[region.widgetId] = settings;
     });
   }
 
@@ -118,6 +169,10 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     targetDisplay = null;
     loadedWidgetId = null;
     edgeState.displayId = null;
+    edgeState.presentedPageId = null;
+    pageLoads.clear();
+    syncPages();
+    for (const id of pageGenerations.keys()) bumpGeneration(id);
     if (live(previous)) previous.destroy();
   }
 
@@ -169,7 +224,8 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
       edgeWindow = null;
       targetDisplay = null;
       loadedWidgetId = null;
-      edgeState = { ...edgeState, status: 'hidden', displayId: null, loadStatus: 'idle', retainedWidgetId: null };
+      edgeState = { ...edgeState, status: 'hidden', displayId: null, loadStatus: 'idle', retainedWidgetId: null,
+        presentedPageId: null };
       broadcast();
     });
   }
@@ -219,31 +275,102 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     return startPromise;
   }
 
-  function selectWidget(id) {
+  function activeTarget(pageId) {
+    const state = stateStore.snapshot();
+    if (typeof pageId !== 'string' || pageId !== state.scene.activePageId) throw new Error('Stale or inactive page target.');
+    return pageOf(state);
+  }
+
+  function selectWidget({ pageId, widgetId } = {}) {
     assertRunning();
-    if (!safeName(id) || !widgets.some(widget => widget.id === id)) throw new TypeError('Unknown widget ID.');
+    activeTarget(pageId);
+    if (!safeName(widgetId) || !widgets.some(widget => widget.id === widgetId)) throw new TypeError('Unknown widget ID.');
+    const oldId = regionOf(stateStore.snapshot()).widgetId;
     stateStore.update(state => {
-      const region = regionOf(state);
-      if (safeName(region.widgetId)) state.widgetSettings[region.widgetId] = region.settings;
-      region.widgetId = id;
-      region.settings = clone(state.widgetSettings[id] || {});
-      state.widgetSettings[id] = region.settings;
+      const page = pageOf(state);
+      const region = page.regions[0];
+      if (safeName(region.widgetId)) page.widgetSettings[region.widgetId] = clone(region.settings);
+      region.widgetId = widgetId;
+      region.settings = clone(page.widgetSettings[widgetId] || {});
+      page.widgetSettings[widgetId] = clone(region.settings);
     });
+    if (oldId !== widgetId) bumpGeneration(pageId);
     prepareLoad(); broadcast(); return snapshot();
   }
 
-  function updateSetting(name, value) {
+  function updateSetting({ pageId, widgetId, name, value } = {}) {
     assertRunning();
+    const page = activeTarget(pageId);
+    if (widgetId !== page.regions[0].widgetId) throw new Error('Stale widget target.');
     if (!safeName(name)) throw new TypeError('Invalid setting name.');
     if (!(value === null || typeof value === 'string' || typeof value === 'boolean' ||
       (typeof value === 'number' && Number.isFinite(value)))) throw new TypeError('Settings require a finite JSON primitive.');
-    const id = regionOf(stateStore.snapshot()).widgetId;
-    if (!safeName(id) || !activeWidget()) throw new Error('Active widget is unavailable.');
+    if (!safeName(widgetId) || !activeWidget()) throw new Error('Active widget is unavailable.');
     stateStore.update(state => {
       const region = regionOf(state);
       region.settings[name] = value;
-      state.widgetSettings[id] = region.settings;
+      pageOf(state).widgetSettings[widgetId] = clone(region.settings);
     });
+    broadcast(); return snapshot();
+  }
+
+  function createPage({ name } = {}) {
+    assertRunning();
+    const widget = activeWidget();
+    const widgetId = widget?.id || null;
+    const defaults = widget ? getDefaultWidgetSettings(widget) : {};
+    let pageId;
+    stateStore.update(state => {
+      do { pageId = `page-${randomUUID()}`; } while (state.scene.pages.some(page => page.id === pageId));
+      const page = pageModel.createPage(state.scene, { id: pageId, name, widgetId });
+      page.regions[0].settings = clone(defaults);
+      if (widgetId) page.widgetSettings[widgetId] = clone(defaults);
+      state.scene.activePageId = pageId;
+    });
+    syncPages(); prepareLoad(); broadcast(); return snapshot();
+  }
+
+  function renamePage(args) {
+    assertRunning();
+    stateStore.update(state => { pageModel.renamePage(state.scene, args); });
+    broadcast(); return snapshot();
+  }
+
+  function movePage({ pageId, direction } = {}) {
+    assertRunning();
+    const offset = direction === 'up' ? -1 : direction === 'down' ? 1 : null;
+    if (offset === null) throw new TypeError('Direction must be up or down.');
+    stateStore.update(state => { pageModel.movePage(state.scene, { pageId, direction: offset }); });
+    broadcast(); return snapshot();
+  }
+
+  function deletePage(args) {
+    assertRunning();
+    const previous = stateStore.snapshot().scene.activePageId;
+    stateStore.update(state => { pageModel.deletePage(state.scene, args); });
+    syncPages();
+    if (previous !== stateStore.snapshot().scene.activePageId) prepareLoad();
+    if (edgeState.presentedPageId === args?.pageId) {
+      edgeState.presentedPageId = null;
+      loadedWidgetId = null;
+      edgeState.retainedWidgetId = null;
+    }
+    broadcast(); return snapshot();
+  }
+
+  function selectPage(args) {
+    assertRunning();
+    const previous = stateStore.snapshot().scene.activePageId;
+    const wasFailed = edgeState.loadStatus === 'failed';
+    stateStore.update(state => { pageModel.selectPage(state.scene, args); });
+    const current = stateStore.snapshot().scene.activePageId;
+    if (current === previous && wasFailed) bumpGeneration(current);
+    prepareLoad(); broadcast(); return snapshot();
+  }
+
+  function setNavigationPosition(args) {
+    assertRunning();
+    stateStore.update(state => { pageModel.setNavigationPosition(state.scene, args); });
     broadcast(); return snapshot();
   }
 
@@ -270,16 +397,28 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
 
   function reportLoadResult(report) {
     assertRunning();
-    if (!report || !Number.isSafeInteger(report.revision) || report.revision !== stateStore.snapshot().revision ||
+    if (!report || typeof report.pageId !== 'string' || typeof report.widgetId !== 'string' ||
+      !Number.isSafeInteger(report.generation) || report.generation < 1 ||
+      !Number.isSafeInteger(report.revision) || report.revision < 0 ||
       typeof report.ok !== 'boolean' || (report.message !== undefined && typeof report.message !== 'string') || !live(edgeWindow)) {
-      throw new TypeError('Invalid or stale Edge load report.');
+      throw new TypeError('Invalid Edge load report.');
     }
-    if (report.ok && !activeWidget()) throw new Error('Active widget is unavailable.');
-    if (report.ok) {
-      loadedWidgetId = regionOf(stateStore.snapshot()).widgetId;
-      edgeState = { ...edgeState, loadStatus: 'loaded', error: null, retainedWidgetId: null };
-    } else {
-      edgeState = { ...edgeState, loadStatus: 'failed', error: report.message || 'Widget failed to prepare.', retainedWidgetId: loadedWidgetId };
+    const state = stateStore.snapshot();
+    const page = state.scene.pages.find(item => item.id === report.pageId);
+    if (!page || page.regions[0].widgetId !== report.widgetId ||
+      pageGenerations.get(report.pageId) !== report.generation || report.revision > state.revision) return snapshot();
+    if (report.pageId === state.scene.activePageId && report.revision < currentRequestRevision) return snapshot();
+    const error = report.ok ? null : report.message || 'Widget failed to prepare.';
+    pageLoads.set(report.pageId, { status: report.ok ? 'loaded' : 'failed', error, generation: report.generation });
+    if (report.pageId === state.scene.activePageId && report.revision >= currentRequestRevision) {
+      if (report.ok) {
+        loadedWidgetId = report.widgetId;
+        edgeState = { ...edgeState, loadStatus: 'loaded', error: null, retainedWidgetId: null,
+          presentedPageId: report.pageId };
+      } else {
+        edgeState = { ...edgeState, loadStatus: 'failed', error,
+          retainedWidgetId: loadedWidgetId };
+      }
     }
     broadcastController(); return snapshot();
   }
@@ -287,10 +426,21 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
   function rescanWidgets() {
     assertRunning();
     const catalog = widgetLibrary.scan().map(publicWidget);
+    const before = new Map(widgets.map(widget => [widget.id, JSON.stringify(widget)]));
+    const after = new Map(catalog.map(widget => [widget.id, JSON.stringify(widget)]));
     stateStore.update(() => {});
     widgets = catalog;
     catalogRevision++;
-    prepareLoad(); broadcast(); return snapshot();
+    let activeAffected = false;
+    for (const page of stateStore.snapshot().scene.pages) {
+      const id = page.regions[0].widgetId;
+      if (before.get(id) !== after.get(id)) {
+        bumpGeneration(page.id);
+        if (page.id === stateStore.snapshot().scene.activePageId) activeAffected = true;
+      }
+    }
+    if (activeAffected) prepareLoad();
+    broadcast(); return snapshot();
   }
 
   function importResult(result) {
@@ -360,7 +510,8 @@ function createAppCoordinator({ stateStore, widgetLibrary, screen,
     return quitPromise;
   }
 
-  return { start, snapshot, getScene, selectWidget, updateSetting, selectDisplay, setEdgeVisible,
+  return { start, snapshot, getScene, createPage, renamePage, movePage, deletePage, selectPage,
+    setNavigationPosition, selectWidget, updateSetting, selectDisplay, setEdgeVisible,
     reportLoadResult, rescanWidgets, beginImport, confirmImport, cancelImport, mergeLegacySettings, activate, quit,
     getControllerWindow: () => live(controllerWindow) ? controllerWindow : null,
     getEdgeWindow: () => live(edgeWindow) ? edgeWindow : null };

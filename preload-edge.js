@@ -10,6 +10,7 @@ if (process.isMainFrame) {
       ipcRenderer.on('edge:scene', listener);
       return () => ipcRenderer.removeListener('edge:scene', listener);
     },
-    reportLoadResult: report => ipcRenderer.invoke('edge:load-result', report)
+    reportLoadResult: report => ipcRenderer.invoke('edge:load-result', report),
+    selectPage: target => ipcRenderer.invoke('edge:select-page', target)
   });
 }

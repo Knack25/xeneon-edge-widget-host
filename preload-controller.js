@@ -11,8 +11,14 @@ if (process.isMainFrame) {
       ipcRenderer.on('app:state', listener);
       return () => ipcRenderer.removeListener('app:state', listener);
     },
-    selectWidget: id => ipcRenderer.invoke('scene:select-widget', id),
-    updateSetting: (name, value) => ipcRenderer.invoke('scene:update-setting', name, value),
+    selectWidget: target => ipcRenderer.invoke('scene:select-widget', target),
+    updateSetting: target => ipcRenderer.invoke('scene:update-setting', target),
+    createPage: target => ipcRenderer.invoke('pages:create', target),
+    renamePage: target => ipcRenderer.invoke('pages:rename', target),
+    movePage: target => ipcRenderer.invoke('pages:move', target),
+    deletePage: target => ipcRenderer.invoke('pages:delete', target),
+    selectPage: target => ipcRenderer.invoke('pages:select', target),
+    setNavigationPosition: target => ipcRenderer.invoke('pages:set-navigation-position', target),
     selectDisplay: id => ipcRenderer.invoke('display:select', id),
     setEdgeVisible: visible => ipcRenderer.invoke('edge:set-visible', visible),
     rescanWidgets: () => ipcRenderer.invoke('widgets:rescan'),

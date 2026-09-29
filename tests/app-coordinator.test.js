@@ -10,11 +10,20 @@ const { createWidgetLibrary } = require('../widget-library');
 const { createAppCoordinator } = require('../app-coordinator');
 const { buildControllerViewModel } = require('../controller-view');
 const { migrateLegacySettings } = require('../controller');
+const { getDefaultWidgetSettings } = require('../widget-settings');
 
 const laptop = { id: 1, label: 'Mac', internal: true, scaleFactor: 2,
   bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 25, width: 1440, height: 875 } };
 const edge = { id: 2, label: 'XENEON Edge', internal: false, scaleFactor: 1,
   bounds: { x: 1440, y: 0, width: 2560, height: 720 }, workArea: { x: 1440, y: 0, width: 2560, height: 720 } };
+const target = (coordinator, widgetId) => ({ pageId: coordinator.snapshot().state.scene.activePageId, widgetId });
+const setting = (coordinator, name, value) => coordinator.updateSetting({ ...target(coordinator, coordinator.snapshot().edge.widgetId), name, value });
+const report = coordinator => {
+  const scene = coordinator.getScene();
+  const pageId = scene.scene.activePageId;
+  return { pageId, widgetId: scene.scene.pages.find(page => page.id === pageId).regions[0].widgetId,
+    generation: scene.pageGenerations[pageId], revision: scene.revision };
+};
 
 class FakeWindow extends EventEmitter {
   constructor(options) {
@@ -111,31 +120,161 @@ test('activation rechecks shutdown after factory readiness resolves', async t =>
 
 test('settings and widget switches preserve per-widget values without recreating Edge', async t => {
   const r = fixture(t); await r.coordinator.start();
-  r.coordinator.updateSetting('gain', 1); r.coordinator.updateSetting('gain', 2);
-  r.coordinator.selectWidget('other'); r.coordinator.updateSetting('color', 'red'); r.coordinator.selectWidget('clock');
+  setting(r.coordinator, 'gain', 1); setting(r.coordinator, 'gain', 2);
+  r.coordinator.selectWidget(target(r.coordinator, 'other')); setting(r.coordinator, 'color', 'red'); r.coordinator.selectWidget(target(r.coordinator, 'clock'));
   assert.equal(r.edges.length, 1);
   assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { gain: 2 });
-  assert.deepEqual(r.coordinator.snapshot().state.widgetSettings, { clock: { gain: 2 }, other: { color: 'red' } });
+  assert.deepEqual(r.coordinator.snapshot().state.scene.pages[0].widgetSettings, { clock: { gain: 2 }, other: { color: 'red' } });
   const messages = r.edges[0].messages.filter(item => item.channel === 'edge:scene');
   assert.ok(messages.some(item => item.value.scene.pages[0].regions[0].settings.gain === 1));
   assert.ok(messages.some(item => item.value.scene.pages[0].regions[0].settings.gain === 2));
   assert.ok(r.controllers[0].messages.some(item => item.channel === 'app:state'));
   await r.stateStore.flush();
-  assert.equal(JSON.parse(fs.readFileSync(path.join(r.temp, 'state.json'))).widgetSettings.clock.gain, 2);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(r.temp, 'state.json'))).scene.pages[0].widgetSettings.clock.gain, 2);
+});
+
+test('page commands keep stable IDs, defaults and independent same-widget settings without native window changes', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  setting(r.coordinator, 'gain', 8);
+  const win = r.edges[0];
+  win.setBounds = () => { throw new Error('page edit moved Edge'); };
+  win.setFullScreen = () => { throw new Error('page edit changed fullscreen'); };
+  win.setSimpleFullScreen = win.setFullScreen;
+  const added = r.coordinator.createPage({ name: '  Sketch  ' });
+  const secondId = added.state.scene.activePageId;
+  assert.notEqual(secondId, firstId);
+  assert.equal(added.state.scene.pages[1].name, 'Sketch');
+  assert.equal(added.state.scene.pages[1].regions[0].widgetId, 'clock');
+  assert.deepEqual(added.state.scene.pages[1].regions[0].settings,
+    getDefaultWidgetSettings(added.widgets.find(widget => widget.id === 'clock')));
+  assert.equal(added.state.scene.pages[0].regions[0].settings.gain, 8);
+  setting(r.coordinator, 'gain', 3);
+  r.coordinator.renamePage({ pageId: secondId, name: '  Updated  ' });
+  r.coordinator.movePage({ pageId: secondId, direction: 'up' });
+  r.coordinator.setNavigationPosition({ position: 'top-left' });
+  assert.deepEqual(r.coordinator.snapshot().state.scene.pages.map(page => page.id), [secondId, firstId]);
+  assert.equal(r.coordinator.snapshot().state.scene.activePageId, secondId);
+  assert.equal(r.coordinator.snapshot().state.scene.pages[0].name, 'Updated');
+  assert.equal(r.coordinator.snapshot().state.scene.navigationPosition, 'top-left');
+  assert.equal(r.coordinator.snapshot().state.scene.pages[0].regions[0].settings.gain, 3);
+  assert.equal(r.coordinator.snapshot().state.scene.pages[1].regions[0].settings.gain, 8);
+  assert.equal(r.edges.length, 1);
+  r.coordinator.deletePage({ pageId: secondId });
+  assert.equal(r.coordinator.snapshot().state.scene.activePageId, firstId);
+});
+
+test('page and setting commands reject stale targets and invalid bounds before mutation', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  const revision = r.coordinator.snapshot().revision;
+  for (const action of [
+    () => r.coordinator.updateSetting({ pageId: firstId, widgetId: 'clock', name: 'gain', value: 7 }),
+    () => r.coordinator.updateSetting({ pageId: secondId, widgetId: 'other', name: 'gain', value: 7 }),
+    () => r.coordinator.selectWidget({ pageId: firstId, widgetId: 'other' }),
+    () => r.coordinator.selectWidget({ pageId: secondId, widgetId: 'missing' }),
+    () => r.coordinator.renamePage({ pageId: 'missing', name: 'Bad' }),
+    () => r.coordinator.movePage({ pageId: secondId, direction: 'sideways' }),
+    () => r.coordinator.deletePage({ pageId: 'missing' }),
+    () => r.coordinator.selectPage({ pageId: 'missing' }),
+    () => r.coordinator.setNavigationPosition({ position: 'center' }),
+    () => r.coordinator.createPage({ name: ' ' })
+  ]) assert.throws(action);
+  assert.equal(r.coordinator.snapshot().revision, revision);
+  r.coordinator.selectPage({ pageId: firstId });
+  assert.equal(r.coordinator.snapshot().state.scene.activePageId, firstId);
+  assert.throws(() => r.coordinator.deletePage({ pageId: 'missing' }));
+});
+
+test('resolved page widgets and generations track replacement and catalog updates', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  let scene = r.coordinator.getScene();
+  assert.equal(scene.pageWidgets[firstId].id, 'clock');
+  assert.equal(scene.pageWidgets[secondId].id, 'clock');
+  const firstGeneration = scene.pageGenerations[firstId];
+  const secondGeneration = scene.pageGenerations[secondId];
+  r.coordinator.selectWidget({ pageId: secondId, widgetId: 'other' });
+  scene = r.coordinator.getScene();
+  assert.equal(scene.pageGenerations[firstId], firstGeneration);
+  assert.ok(scene.pageGenerations[secondId] > secondGeneration);
+  assert.equal(scene.pageWidgets[secondId].id, 'other');
+  const beforeOther = scene.pageGenerations[secondId];
+  writeWidget(path.join(r.temp, 'widgets'), 'clock', 'clock', '2');
+  r.coordinator.rescanWidgets();
+  scene = r.coordinator.getScene();
+  assert.ok(scene.pageGenerations[firstId] > firstGeneration);
+  assert.equal(scene.pageGenerations[secondId], beforeOther);
+});
+
+test('an unchanged catalog scan preserves a pending page request', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const pending = { ...report(r.coordinator), ok: true };
+  r.coordinator.rescanWidgets();
+  assert.equal(r.coordinator.getScene().pageGenerations[pending.pageId], pending.generation);
+  r.coordinator.reportLoadResult(pending);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
+});
+
+test('stale and inactive reports cannot promote the wrong page; failed active page retries with a new generation', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstReport = { ...report(r.coordinator), ok: true };
+  r.coordinator.reportLoadResult(firstReport);
+  const firstId = firstReport.pageId;
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  const secondReport = { ...report(r.coordinator), ok: false, message: 'network error' };
+  r.coordinator.reportLoadResult(secondReport);
+  assert.equal(r.coordinator.snapshot().edge.requestedPageId, secondId);
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, firstId);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'failed');
+  r.coordinator.reportLoadResult(firstReport);
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, firstId);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'failed');
+  r.coordinator.selectPage({ pageId: secondId });
+  const retry = report(r.coordinator);
+  assert.ok(retry.generation > secondReport.generation);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loading');
+  r.coordinator.reportLoadResult({ ...secondReport, ok: true });
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, firstId);
+  assert.equal(r.coordinator.snapshot().edge.pageLoads[secondId].status, 'loading');
+  r.coordinator.reportLoadResult({ ...retry, ok: true });
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, secondId);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
+  r.coordinator.deletePage({ pageId: firstId });
+  r.coordinator.reportLoadResult(firstReport);
+  assert.equal(r.coordinator.snapshot().edge.presentedPageId, secondId);
+});
+
+test('a late report from an earlier request cannot mark a newly requested visit loaded', async t => {
+  const r = fixture(t); await r.coordinator.start();
+  const firstId = r.coordinator.snapshot().state.scene.activePageId;
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  const secondId = r.coordinator.createPage({ name: 'Second' }).state.scene.activePageId;
+  const earlier = { ...report(r.coordinator), ok: true };
+  r.coordinator.selectPage({ pageId: firstId });
+  r.coordinator.selectPage({ pageId: secondId });
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loading');
+  r.coordinator.reportLoadResult(earlier);
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loading');
+  assert.equal(r.coordinator.snapshot().edge.pageLoads[secondId].status, 'loading');
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
 });
 
 test('migration merges inactive settings once and startup synchronizes the active cache', async t => {
   const r = fixture(t, { prepare: store => store.update(state => { state.scene.pages[0].regions[0].settings = { gain: 7 }; }) });
   await r.coordinator.start();
-  assert.deepEqual(r.coordinator.snapshot().state.widgetSettings.clock, { gain: 7 });
+  assert.deepEqual(r.coordinator.snapshot().state.scene.pages[0].widgetSettings.clock, { gain: 7 });
   assert.equal(await r.coordinator.mergeLegacySettings({ clock: { gain: 3, color: 'blue' }, other: { speed: 5 } }), true);
   assert.equal(await r.coordinator.mergeLegacySettings({ clock: { gain: 9 } }), false);
-  r.coordinator.selectWidget('other'); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { speed: 5 });
-  r.coordinator.selectWidget('clock'); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { gain: 7, color: 'blue' });
+  r.coordinator.selectWidget(target(r.coordinator, 'other')); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { speed: 5 });
+  r.coordinator.selectWidget(target(r.coordinator, 'clock')); assert.deepEqual(r.coordinator.getScene().scene.pages[0].regions[0].settings, { gain: 7, color: 'blue' });
 });
 
 test('recovered persisted bytes produce a visible controller notice through the real coordinator', async t => {
-  for (const bytes of ['{bad', '{"version":99,"widgetSettings":{"clock":{"gain":145}}}']) {
+  for (const bytes of ['{bad']) {
     const r = fixture(t, { persisted: bytes }); await r.coordinator.start();
     assert.match(buildControllerViewModel(r.coordinator.snapshot()).edge.message, /State recovered from invalid persisted data/);
     assert.doesNotMatch(JSON.stringify(r.coordinator.snapshot().recovery), /app-coordinator-|state.json/);
@@ -144,8 +283,15 @@ test('recovered persisted bytes produce a visible controller notice through the 
   }
 });
 
+test('unsupported future state opens read-only without overwriting its bytes', async t => {
+  const bytes = '{"version":99,"widgetSettings":{"clock":{"gain":145}}}';
+  const r = fixture(t, { persisted: bytes }); await r.coordinator.start();
+  assert.equal(r.coordinator.snapshot().recovery.status, 'read-only');
+  assert.equal(fs.readFileSync(path.join(r.temp, 'state.json'), 'utf8'), bytes);
+});
+
 test('migration keeps localStorage on durable write failure and retries the already merged state before acknowledgement', async t => {
-  const r = fixture(t); await r.coordinator.start(); r.coordinator.updateSetting('gain', 7); await r.stateStore.flush();
+  const r = fixture(t); await r.coordinator.start(); setting(r.coordinator, 'gain', 7); await r.stateStore.flush();
   const bytes = '{"clock":{"gain":3,"color":"blue"},"other":{"speed":5,"nested":{"list":[1,true,null]}}}';
   const storage = { value: bytes, getItem() { return this.value; }, removeItem() { this.value = null; } };
   const bridge = { submitLegacySettings: data => r.coordinator.mergeLegacySettings(data) };
@@ -158,7 +304,7 @@ test('migration keeps localStorage on durable write failure and retries the alre
   await migrateLegacySettings(storage, bridge); assert.equal(storage.value, null);
   const reloaded = createStateStore({ statePath, defaultWidgetId: 'clock' });
   assert.equal(reloaded.snapshot().legacySettingsMigrated, true);
-  assert.deepEqual(reloaded.snapshot().widgetSettings, { clock: { gain: 7, color: 'blue' }, other: { speed: 5, nested: { list: [1, true, null] } } });
+  assert.deepEqual(reloaded.snapshot().scene.pages[0].widgetSettings, { clock: { gain: 7, color: 'blue' }, other: { speed: 5, nested: { list: [1, true, null] } } });
   await reloaded.flush();
 });
 
@@ -177,9 +323,9 @@ test('hidden manual targets remain selected independently of the Edge window and
 
 test('invalid commands fail closed without changing revision', async t => {
   const r = fixture(t); await r.coordinator.start(); const revision = r.coordinator.snapshot().revision;
-  for (const id of ['missing', '', '__proto__', 1]) assert.throws(() => r.coordinator.selectWidget(id));
-  for (const name of ['', ' ', '__proto__', 'constructor', 'prototype', 1]) assert.throws(() => r.coordinator.updateSetting(name, 1));
-  for (const value of [NaN, Infinity, undefined, {}, [], () => 1, 1n]) assert.throws(() => r.coordinator.updateSetting('gain', value));
+  for (const id of ['missing', '', '__proto__', 1]) assert.throws(() => r.coordinator.selectWidget(target(r.coordinator, id)));
+  for (const name of ['', ' ', '__proto__', 'constructor', 'prototype', 1]) assert.throws(() => r.coordinator.updateSetting({ ...target(r.coordinator, 'clock'), name, value: 1 }));
+  for (const value of [NaN, Infinity, undefined, {}, [], () => 1, 1n]) assert.throws(() => setting(r.coordinator, 'gain', value));
   for (const id of [99, '2', null, {}, Infinity]) assert.throws(() => r.coordinator.selectDisplay(id));
   for (const visible of [0, 1, 'true', null]) assert.throws(() => r.coordinator.setEdgeVisible(visible));
   assert.equal(r.coordinator.snapshot().revision, revision);
@@ -265,16 +411,17 @@ test('recovery budget expires after thirty seconds', async t => {
 
 test('load failures report the retained widget and reject stale or malformed reports', async t => {
   const r = fixture(t); await r.coordinator.start();
-  r.coordinator.reportLoadResult({ revision: r.coordinator.getScene().revision, ok: true });
-  r.coordinator.selectWidget('other');
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
+  r.coordinator.selectWidget(target(r.coordinator, 'other'));
   const revision = r.coordinator.getScene().revision;
-  r.coordinator.reportLoadResult({ revision, ok: false, message: 'fetch failed' });
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: false, message: 'fetch failed' });
   assert.equal(r.coordinator.snapshot().edge.retainedWidgetId, 'clock');
   assert.equal(r.coordinator.snapshot().edge.loadStatus, 'failed');
-  for (const report of [{ revision: revision - 1, ok: true }, { revision, ok: 'yes' }, { revision, ok: false, message: {} }]) {
-    assert.throws(() => r.coordinator.reportLoadResult(report));
+  for (const bad of [{ ...report(r.coordinator), revision: revision - 1, ok: true }, { ...report(r.coordinator), ok: 'yes' }, { ...report(r.coordinator), ok: false, message: {} }]) {
+    if (bad.revision === revision - 1) assert.equal(r.coordinator.reportLoadResult(bad).edge.loadStatus, 'failed');
+    else assert.throws(() => r.coordinator.reportLoadResult(bad));
   }
-  r.coordinator.reportLoadResult({ revision, ok: true });
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
   assert.equal(r.coordinator.snapshot().edge.loadStatus, 'loaded');
   assert.equal(r.coordinator.snapshot().edge.retainedWidgetId, null);
 });
@@ -283,7 +430,7 @@ test('load reports update controller status without rebroadcasting an unchanged 
   const r = fixture(t); await r.coordinator.start();
   const edgeCount = r.edges[0].messages.length;
   const controllerCount = r.controllers[0].messages.length;
-  r.coordinator.reportLoadResult({ revision: r.coordinator.getScene().revision, ok: true });
+  r.coordinator.reportLoadResult({ ...report(r.coordinator), ok: true });
   assert.equal(r.edges[0].messages.length, edgeCount);
   assert.equal(r.controllers[0].messages.length, controllerCount + 1);
 });
@@ -332,7 +479,7 @@ test('public snapshots and broadcasts omit roots and isolate references', async 
 });
 
 test('imports require one-use confirmation and replacement reloads same-ID assets while preserving settings', async t => {
-  const r = fixture(t); await r.coordinator.start(); r.coordinator.updateSetting('gain', 4);
+  const r = fixture(t); await r.coordinator.start(); setting(r.coordinator, 'gain', 4);
   const incoming = writeWidget(r.temp, 'incoming', 'clock', '2');
   const pending = r.coordinator.beginImport(incoming);
   assert.equal(pending.status, 'confirmation-required'); assert.equal(pending.incoming.version, '2');
@@ -353,10 +500,10 @@ test('imports require one-use confirmation and replacement reloads same-ID asset
 });
 
 test('quit closes windows, flushes state, closes server and removes topology listeners', async t => {
-  const r = fixture(t); await r.coordinator.start(); r.coordinator.updateSetting('gain', 9);
+  const r = fixture(t); await r.coordinator.start(); setting(r.coordinator, 'gain', 9);
   await r.coordinator.quit();
   assert.equal(r.controllers[0].destroyed, true); assert.equal(r.edges[0].destroyed, true); assert.equal(r.server.closed, true);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(r.temp, 'state.json'))).widgetSettings.clock.gain, 9);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(r.temp, 'state.json'))).scene.pages[0].widgetSettings.clock.gain, 9);
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) assert.equal(r.screen.listenerCount(event), 0);
   r.edges[0].webContents.emit('render-process-gone', {}, { reason: 'crashed' }); assert.equal(r.edges.length, 1);
 });

@@ -22,6 +22,12 @@ function registerIpc({ ipcMain, coordinator, getControllerWindow, getEdgeWindow,
   handle('app:get-state', controller, 'snapshot');
   handle('scene:select-widget', controller, 'selectWidget');
   handle('scene:update-setting', controller, 'updateSetting');
+  handle('pages:create', controller, 'createPage');
+  handle('pages:rename', controller, 'renamePage');
+  handle('pages:move', controller, 'movePage');
+  handle('pages:delete', controller, 'deletePage');
+  handle('pages:select', controller, 'selectPage');
+  handle('pages:set-navigation-position', controller, 'setNavigationPosition');
   handle('display:select', controller, 'selectDisplay');
   handle('edge:set-visible', controller, 'setEdgeVisible');
   handle('widgets:rescan', controller, 'rescanWidgets');
@@ -30,6 +36,7 @@ function registerIpc({ ipcMain, coordinator, getControllerWindow, getEdgeWindow,
   handle('settings:migrate-legacy', controller, 'mergeLegacySettings');
   handle('edge:get-scene', edge, 'getScene');
   handle('edge:load-result', edge, 'reportLoadResult');
+  handle('edge:select-page', edge, 'selectPage');
 
   ipcMain.handle('widgets:import', async event => {
     const window = controller(event);
