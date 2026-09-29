@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/start-electron.js .",
     "web": "node web-server.js",
-    "test": "node --test tests/app-state.test.js && node tests/main.test.js && node tests/presentation.test.js",
+    "test": "node --test tests/app-state.test.js tests/display-policy.test.js && node tests/main.test.js && node tests/presentation.test.js",
     "test:smoke": "node scripts/run-smoke.js"
   },
   "repository": {

@@ -2,9 +2,29 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { selectEdgeDisplay, createPresentation } = require('../presentation');
+const { selectEdgeDisplay, createPresentation, enterEdgePresentation, leaveEdgePresentation } = require('../presentation');
 const laptop = { id: 1, label: 'Built-in', internal: true, scaleFactor: 2, bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 25, width: 1512, height: 957 } };
 const edge = { id: 2, label: 'XENEON EDGE', internal: false, scaleFactor: 2, bounds: { x: -1280, y: 0, width: 1280, height: 360 } };
+test('Edge helpers apply target bounds, Mac simple fullscreen and Dock level without Escape listeners', () => {
+  const calls = [];
+  const win = new EventEmitter();
+  win.webContents = new EventEmitter();
+  win.setBounds = value => calls.push(['bounds', value]);
+  win.setSimpleFullScreen = value => calls.push(['simple', value]);
+  win.setAlwaysOnTop = (...args) => calls.push(['top', ...args]);
+  enterEdgePresentation(win, edge.bounds, 'darwin');
+  leaveEdgePresentation(win, 'darwin');
+  assert.deepEqual(calls, [['bounds', edge.bounds], ['simple', true], ['top', true, 'pop-up-menu'], ['simple', false], ['top', false]]);
+  assert.equal(win.webContents.listenerCount('before-input-event'), 0);
+  assert.equal(win.eventNames().length, 0);
+});
+test('Edge helpers use native fullscreen outside macOS', () => {
+  const calls = [];
+  const win = { setBounds: value => calls.push(['bounds', value]), setFullScreen: value => calls.push(['fullscreen', value]) };
+  enterEdgePresentation(win, edge.bounds, 'win32');
+  leaveEdgePresentation(win, 'win32');
+  assert.deepEqual(calls, [['bounds', edge.bounds], ['fullscreen', true], ['fullscreen', false]]);
+});
 test('name wins, scaled physical size is a fallback, ambiguous matches stay in launcher', () => {
   assert.equal(selectEdgeDisplay([laptop, edge]).id, 2);
   assert.equal(selectEdgeDisplay([laptop, { ...edge, label: '' }]).id, 2);

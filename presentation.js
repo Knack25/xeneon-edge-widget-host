@@ -1,15 +1,27 @@
 'use strict';
+const { resolveEdgeDisplay } = require('./display-policy');
 
 function selectEdgeDisplay(displays) {
-  const external = displays.filter(display => !display.internal);
-  const named = external.filter(display => /xeneon.*edge|edge.*xeneon/i.test(display.label || ''));
-  if (named.length) return named.length === 1 ? named[0] : null;
-  const sized = external.filter(display => {
-    const dimensions = [display.bounds.width, display.bounds.height]
-      .map(value => Math.round(value * display.scaleFactor)).sort((a, b) => a - b);
-    return dimensions[0] === 720 && dimensions[1] === 2560;
-  });
-  return sized.length === 1 ? sized[0] : null;
+  return resolveEdgeDisplay(displays, { mode: 'automatic' }).display;
+}
+
+function enterEdgePresentation(win, bounds, platform) {
+  win.setBounds(bounds);
+  if (platform === 'darwin') {
+    win.setSimpleFullScreen(true);
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+  } else {
+    win.setFullScreen(true);
+  }
+}
+
+function leaveEdgePresentation(win, platform) {
+  if (platform === 'darwin') {
+    win.setSimpleFullScreen(false);
+    win.setAlwaysOnTop(false);
+  } else {
+    win.setFullScreen(false);
+  }
 }
 
 function createPresentation(win, screen, platform) {
@@ -106,4 +118,4 @@ function createPresentation(win, screen, platform) {
   return { state, enter, exit };
 }
 
-module.exports = { selectEdgeDisplay, createPresentation };
+module.exports = { selectEdgeDisplay, createPresentation, enterEdgePresentation, leaveEdgePresentation };
