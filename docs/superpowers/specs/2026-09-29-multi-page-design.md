@@ -1,6 +1,9 @@
 # Multi-page Edge presentation
 
-Status: proposed for user review. Implementation has not started.
+Status: approved design; implemented on `feat/multi-page-navigation`. Node and
+isolated real Electron checks passed 2026-09-29. Physical multi-page acceptance
+remains pending user confirmation. See
+`docs/validation/2026-09-29-multi-page-macos.md`.
 
 ## Intent and approved scope
 

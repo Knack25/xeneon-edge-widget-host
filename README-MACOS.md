@@ -3,12 +3,14 @@
 This experimental adaptation of Corsair Labs' Raspberry Pi runner has two
 windows: a controller on the Mac display and a dedicated fullscreen Edge display.
 The controller has static thumbnails, metadata, settings, imports and display
-controls. Only the Edge executes a live widget. Widget selection and setting
+controls. Only the Edge executes live widgets. Widget selection and setting
 changes update the Edge without moving its window or leaving fullscreen.
 
-Phase one has exactly one page with one full-page widget. Page creation and
-Edge-side navigation (gestures or unobtrusive buttons) come next; simultaneous
-multi-widget layouts and editing follow later.
+Each page has one full-page widget. Use the controller to create, rename, reorder,
+select or delete pages and to choose one of six positions for the numbered Edge
+page buttons. The buttons appear only with multiple pages. The selected page and
+button position restore after restart. Simultaneous multi-widget layouts and
+gesture navigation remain future work.
 
 ## Run on Apple Silicon
 
@@ -47,6 +49,24 @@ reports the error. Settings reach the active widget live.
 Preparation has a 15-second deadline covering fetch, frame navigation and initial
 asynchronous settings application; a timeout retains the previous widget.
 
+**Add page** creates and selects a new page using the current widget's default
+settings. Each page has independent host-managed settings, even when two pages
+use the same widget. Rename and reorder preserve page identity. Deleting a page
+discards its live widget state and selects the previous page; the final page
+cannot be deleted. Pages are limited to 12, with names of 1–80 trimmed
+characters. The controller shows which page was requested if preparation fails
+while another page remains visible; select the failed page again to retry.
+
+The Edge loads a page on its first visit and retains visited widget frames while
+the Edge window exists. Switching back can preserve in-memory state such as a
+Doodle drawing without recreating the frame. Inactive frames stay full-size but
+cannot receive pointer or keyboard input. They can still use CPU, timers or
+audio, and timer cadence may be throttled. Hide/Show, display disconnect, renderer
+crash and quit can destroy those frames. Widget-owned persistence then determines
+what survives. Widgets using same-origin localStorage or cookies share that
+storage across pages; this host does not isolate or promise distinct saved Doodle
+documents across app restarts.
+
 Closing the controller leaves the Edge and application-owned loopback server
 running. Clicking the Dock icon recreates or focuses the controller. **Hide Edge**
 destroys only the presentation window and preserves the scene; **Show Edge**
@@ -54,11 +74,12 @@ recreates it on the selected target. **Command-Q** quits both windows, flushes
 saved state and closes the server. Hiding Edge and closing the controller still
 leaves the macOS app available from Dock.
 
-The Edge has no app toolbar, sidebar, status overlay or exit button. Escape does
-not exit fullscreen. Use the controller for app controls. macOS presentation uses
+The Edge has only its numbered page buttons: no app toolbar, sidebar, status
+overlay or exit button. Escape does not exit fullscreen. Use the controller for
+configuration and window controls. macOS presentation uses
 simple fullscreen without a new Space, accepts first mouse input, and uses the
 `pop-up-menu` window level while visible to cover the Dock. Physical first-touch
-delivery and Dock coverage still need acceptance on this two-window build.
+delivery and Dock coverage still need acceptance on this multi-page build.
 
 ## Display selection and restoration
 
@@ -91,8 +112,10 @@ launch context and path overrides. Use the runtime's `app.getPath('userData')`
 value when locating data; do not assume an app folder name. Smoke overrides it
 with an isolated profile.
 
-Versioned state saves the active widget, per-widget settings, scene visibility,
-display preference and controller bounds. Bounds restore only when sufficiently
+Version 2 state saves ordered pages, the active page ID, navigation position,
+per-page widget settings, scene visibility, display preference and controller
+bounds. Version 1 profiles migrate their single page and remembered widget
+settings. Bounds restore only when sufficiently
 visible on a connected non-Edge display; otherwise the controller centers on a
 safe display. Writes are debounced and atomically renamed, with a quit flush.
 Malformed JSON, unsupported versions, invalid known schema fields, and settings
@@ -123,7 +146,7 @@ Validation does not make arbitrary widget scripts safe: use trusted local widget
 
 ## Verification and physical acceptance
 
-Run these with the normal app quit because both use `127.0.0.1:8080`:
+Run these with the normal app quit because smoke uses `127.0.0.1:8080`:
 
 ```sh
 npm test
@@ -132,23 +155,24 @@ npm run test:smoke
 
 The runner refuses an occupied port and does not stop another service. Smoke
 uses production windows, server and runtime with fresh isolated
-`artifacts/smoke-profile-*` userData. On this Mac it requires a unique actual
-Edge, without substituting a simulated monitor. It checks Clock animation, live
-Doodle selection/settings, static controller, one live widget, fullscreen,
-ignored Escape, controller recreation, Hide/Show, renderer errors, and app.quit
-with closed port 8080. That shutdown path is used by Command-Q; smoke does not
-physically press the shortcut.
+`artifacts/smoke-profile-*` userData. It requires a unique actual Edge. The
+multi-page scenario starts from a version 1 profile, draws into two live Doodle
+frames using Electron mouse events, checks switch-back pixels and native frame
+IDs, records inactive timer activity, checks keyboard exclusion and all six
+button positions, then relaunches the same isolated profile to check persisted
+page/order/setting/position. It also checks a controlled failed widget, deletion,
+re-import invalidation, controller recreation, Hide/Show and Edge reload. Its
+app.quit path is shared with Command-Q; it does not physically press the shortcut.
+The current multi-page smoke passed after port 8080 became free; see the
+[validation record](docs/validation/2026-09-29-multi-page-macos.md).
 
-Evidence: `artifacts/smoke-result.json`, `controller-electron.png`,
-`edge-clock-electron.png`, and `edge-doodle-electron.png`. Automated Mac/Edge smoke
-is PASS on darwin arm64 / Electron 41.5.0. See the
-[validation record](docs/validation/2026-09-22-two-window-macos.md) for actual
-2026-09-29 environment, test counts and all ten pending hardware checks. Its
-filename follows the approved plan date, not the execution date.
+The completed two-window baseline evidence is in the
+[earlier validation record](docs/validation/2026-09-22-two-window-macos.md).
+Its physical confirmations do not accept multi-page behavior.
 
-Earlier builds had user-confirmed clock animation and later first-click/Dock
-retests, but those confirmations do not accept this two-window build. Prior
-coordinate probes found Edge touches routed to the built-in display rather than
+The earlier two-window build had user-confirmed touch, pointer and Dock checks,
+but those confirmations do not accept this multi-page build. Prior coordinate
+probes found Edge touches routed to the built-in display rather than
 Edge. App code cannot reroute events it never receives. The user's existing
 MacXeneonEdgeTouchDriver setup and Accessibility/cursor-return issues remain
 separate from window management; this feature installs no HID driver/calibration.
