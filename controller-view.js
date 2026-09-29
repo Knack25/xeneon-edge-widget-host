@@ -22,10 +22,11 @@
     if (edge.loadStatus === 'loading') message += ' · Loading widget';
     if (edge.loadStatus === 'failed') message += ` · Widget failed to prepare${edge.retainedWidgetId ? '; previous widget retained' : ''}`;
     if (edge.error) message += ` · ${edge.error}`;
-    if (edge.presentedPageId && edge.presentedPageId !== activePageId) {
+    if (activePageId && edge.presentedPageId !== activePageId &&
+      (edge.status === 'active' || edge.loadStatus === 'loading' || edge.loadStatus === 'failed')) {
       const requested = pages.find(page => page.id === activePageId)?.name || 'requested page';
-      const presented = pages.find(page => page.id === edge.presentedPageId)?.name || 'previous page';
-      message += ` · Requested ${requested}; showing ${presented}`;
+      const presented = edge.presentedPageId ? pages.find(page => page.id === edge.presentedPageId)?.name || 'previous page' : null;
+      message += presented ? ` · Requested ${requested}; showing ${presented}` : ` · Requested ${requested}; no page currently shown`;
     }
     if (snapshot.recovery?.status === 'recovered') message += ' · State recovered from invalid persisted data; original configuration preserved';
     return { revision: snapshot.revision, widgets, pages, activePageId, navigationPosition: scene.navigationPosition || 'bottom-right', canAddPage: pages.length < 12, canDeletePage: pages.length > 1, presentedPageId: edge.presentedPageId || null, activeWidgetId, activeWidget: widgets.find(widget => widget.active) || null, settings: region.settings || {}, displays: snapshot.displays || [], displayValue: state.displayPreference?.mode === 'automatic' ? 'automatic' : (snapshot.selectedTargetDisplayId ?? ''), visible: state.scene?.visible === true, edge: { ...edge, message, actionDisabled: edge.status === 'ambiguous' || edge.status === 'disconnected' } };

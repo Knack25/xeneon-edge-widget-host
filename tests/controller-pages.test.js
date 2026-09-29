@@ -17,14 +17,14 @@ const widgetId = 'com.meloyellowjr.spectrumanalyzer';
 function snapshot(pages = [{ id: 'one', name: 'One', regions: [{ widgetId, settings: { inputGain: 10 } }] }], activePageId = 'one') {
   return { revision: 1, widgets: [{ id: widgetId, iconUrl: '/icon.svg', manifest: { name: 'Analyzer' } }], displays: [], state: { displayPreference: { mode: 'automatic' }, scene: { visible: true, activePageId, navigationPosition: 'bottom-right', pages } }, edge: { status: 'active', widgetId, requestedPageId: activePageId, presentedPageId: activePageId, loadStatus: 'loaded' } };
 }
-function setup() {
+function setup(overrides = {}) {
   const elements = new Map(); const calls = []; let receive;
   const document = { activeElement: null, createElement: tag => new Element(tag), getElementById: id => { if (!elements.has(id)) elements.set(id, new Element(id)); return elements.get(id); } };
   const bridge = { nativeControls: true, onState: fn => { receive = fn; return () => {}; }, getState: async () => snapshot(),
     selectWidget: async target => calls.push(['widget', target]), updateSetting: async target => calls.push(['setting', target]),
     createPage: async target => calls.push(['add', target]), renamePage: async target => calls.push(['rename', target]), movePage: async target => calls.push(['move', target]),
     deletePage: async target => calls.push(['delete', target]), selectPage: async target => calls.push(['select', target]), setNavigationPosition: async target => calls.push(['position', target]),
-    selectDisplay: async () => {}, setEdgeVisible: async () => {}, rescanWidgets: async () => {}, importWidget: async () => {}, minimize() {}, toggleMaximize() {}, close() {} };
+    selectDisplay: async () => {}, setEdgeVisible: async () => {}, rescanWidgets: async () => {}, importWidget: async () => {}, minimize() {}, toggleMaximize() {}, close() {}, ...overrides };
   return { controller: createController({ document, bridge, storage: { getItem: () => null } }), document, elements, calls, receive: value => receive(value) };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -99,4 +99,25 @@ test('move controls and six navigation presets send live commands', async () => 
   for (const option of position.children) { position.value = option.value; position.dispatch('change'); }
   await tick();
   assert.deepEqual(f.calls.slice(1), position.children.map(option => ['position', { position: option.value }]));
+});
+
+test('Edge page switch replaces a focused name draft and same-page snapshot preserves it', async () => {
+  const f = setup(); await f.controller.start(); f.receive(snapshot(pages(), 'one'));
+  const name = f.elements.get('page-name'); f.document.activeElement = name;
+  name.value = 'Draft for One';
+  f.receive(snapshot(pages(), 'one'));
+  assert.equal(name.value, 'Draft for One');
+  f.receive(snapshot(pages(), 'two'));
+  assert.equal(name.value, 'Two');
+  f.elements.get('page-rename').dispatch('click'); await tick();
+  assert.deepEqual(f.calls, [['rename', { pageId: 'two', name: 'Two' }]]);
+});
+
+test('focused navigation placement follows saved snapshots and reverts rejected changes', async () => {
+  const f = setup({ setNavigationPosition: async () => { throw Error('Position rejected'); } }); await f.controller.start();
+  const position = f.elements.get('navigation-position'); f.document.activeElement = position;
+  const changed = snapshot(); changed.state.scene.navigationPosition = 'top-left'; f.receive(changed);
+  assert.equal(position.value, 'top-left');
+  position.value = 'top-right'; position.dispatch('change'); await tick();
+  assert.equal(position.value, 'top-left');
 });

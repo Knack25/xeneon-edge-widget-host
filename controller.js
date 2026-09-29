@@ -104,7 +104,7 @@
       el('page-delete').disabled = !model.canDeletePage;
       el('page-up').disabled = index <= 0;
       el('page-down').disabled = index < 0 || index >= model.pages.length - 1;
-      if (previousPageId !== model.activePageId && document.activeElement !== el('page-name')) {
+      if (previousPageId !== model.activePageId) {
         el('page-name').value = model.pages[index]?.name || '';
         el('page-error').hidden = true;
       }
@@ -115,7 +115,7 @@
       if (!el('navigation-position').children.length) {
         el('navigation-position').replaceChildren(...presets.map(([value, label]) => { const option = node('option', label); option.value = value; return option; }));
       }
-      if (document.activeElement !== el('navigation-position')) el('navigation-position').value = model.navigationPosition;
+      el('navigation-position').value = model.navigationPosition;
     }
     function renderDisplays() {
       if (document.activeElement === el('display')) return;
@@ -161,7 +161,11 @@
     el('page-delete-confirm').addEventListener('click', () => { const pageId = deletePageId; dismissDelete(); if (pageId) command(() => bridge.deletePage({ pageId })); });
     el('page-delete-dialog').addEventListener('cancel', event => { event.preventDefault(); dismissDelete(); });
     el('page-delete-dialog').addEventListener('close', () => { deletePageId = null; });
-    el('navigation-position').addEventListener('change', () => { const position = el('navigation-position').value; command(() => bridge.setNavigationPosition({ position })); });
+    el('navigation-position').addEventListener('change', async () => {
+      const position = el('navigation-position').value;
+      try { await bridge.setNavigationPosition({ position }); }
+      catch (err) { error(err); el('navigation-position').value = model.navigationPosition; }
+    });
     el('display').addEventListener('change', () => { const value = el('display').value; if (value) command(() => bridge.selectDisplay(value === 'automatic' ? value : Number(value))); });
     el('visibility').addEventListener('click', () => { if (model) command(() => bridge.setEdgeVisible(!(model.visible && model.edge.status !== 'failed'))); });
     el('rescan').addEventListener('click', () => command(() => bridge.rescanWidgets()));

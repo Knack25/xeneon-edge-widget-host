@@ -38,6 +38,15 @@ test('view model selects settings by active page ID and exposes page limits and 
   data.state.scene.pages = Array.from({ length: 12 }, (_, index) => ({ id: `p${index}`, name: `Page ${index}`, regions: [{ widgetId: 'shared', settings: {} }] }));
   assert.equal(buildControllerViewModel(data).canAddPage, false);
 });
+test('failed requested page with no presented page is explicit in controller status', () => {
+  const data = snapshot();
+  data.state.scene.pages[0].name = 'Retry sketch';
+  data.edge.presentedPageId = null;
+  data.edge.loadStatus = 'failed';
+  const message = buildControllerViewModel(data).edge.message;
+  assert.match(message, /Requested Retry sketch/);
+  assert.match(message, /no page (is )?(currently )?shown/i);
+});
 test('edge topology and load failure are both visible including retained content', () => {
   assert.equal(buildControllerViewModel(snapshot('disconnected')).edge.message, 'Edge disconnected');
   assert.equal(buildControllerViewModel(snapshot('ambiguous')).edge.actionDisabled, true);
