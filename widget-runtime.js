@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
   const settingsApi = typeof module === 'object' && module.exports ? require('./widget-settings') : root.ICUEWidgetSettings;
+  const DOODLE_ID = 'com.corsair.widget.doodle-pad';
   const escapeHtml = value => String(value ?? '').replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
   const jsonForScript = value => JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   function normalizeManifest(manifest, folder = 'Unknown Widget') {
@@ -10,12 +11,38 @@
   function propertiesFor(widget, settings, pageId) {
     const manifest = normalizeManifest(widget.manifest, widget.folder);
     const properties = { ...settingsApi.getDefaultWidgetSettings(widget), ...settings, widgetId: widget.id || manifest.id, widgetName: manifest.name, uniqueId: widget.id || widget.uid || manifest.id };
-    if (widget.id === 'com.corsair.widget.doodle-pad' && pageId) properties.icuePageId = pageId;
+    if (properties.widgetId === DOODLE_ID && pageId) {
+      properties.icuePageId = pageId;
+      properties.uniqueId = DOODLE_ID + ':page:' + pageId;
+    }
     return properties;
   }
   function buildShimScript(widget, settings = {}, pageId) {
+    const migrateDoodle = (widget.id || widget.manifest?.id) === DOODLE_ID && pageId ? `
+      // This runs before either bundled or managed Doodle HTML reads uniqueId.
+      try {
+        const legacyKey = props.widgetId;
+        const scopedKey = props.uniqueId;
+        const legacy = localStorage.getItem(legacyKey);
+        if (legacy !== null && localStorage.getItem(scopedKey) === null) {
+          const ownerKey = legacyKey + ':legacy-page';
+          const owner = localStorage.getItem(ownerKey);
+          if (!owner || owner === props.icuePageId) {
+            if (!owner) {
+              try { localStorage.setItem(ownerKey, props.icuePageId); }
+              catch (_) { props.uniqueId = legacyKey; }
+            }
+            if (props.uniqueId === scopedKey) {
+              try { localStorage.setItem(scopedKey, legacy); }
+              catch (_) { props.uniqueId = legacyKey; }
+            }
+          }
+        }
+      } catch (_) { /* Keep the widget usable when storage is unavailable. */ }
+    ` : '';
     return `(() => {
       const props = ${jsonForScript(propertiesFor(widget, settings, pageId))};
+      ${migrateDoodle}
       Object.assign(window, props);
       window.iCUE = Object.assign({ iCUELanguage: 'en', ipRegistryApiKey: '' }, window.iCUE || {});
       window.tr = window.tr || (value => Promise.resolve(String(value)));
@@ -78,6 +105,7 @@
       try {
         if (target.__ICUEWidgetRuntimeFailure) throw new Error(target.__ICUEWidgetRuntimeFailure);
         const properties = propertiesFor(operation.widget, operation.settings, pageId);
+        if (properties.widgetId === DOODLE_ID && target.uniqueId) properties.uniqueId = target.uniqueId;
         for (const name of operation.appliedNames || []) if (!Object.hasOwn(properties, name)) delete target[name];
         Object.assign(target, properties);
         operation.appliedNames = Object.keys(properties);

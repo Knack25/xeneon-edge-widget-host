@@ -3,8 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createWidgetRuntime, buildWidgetShell, buildShimScript } = require('../widget-runtime');
 const { createEdge } = require('../edge');
+const { createWidgetLibrary } = require('../widget-library');
 const clock = { id: 'com.shocksim.robextourbillon', baseUrl: '/widgets/clock', entryUrl: '/widgets/clock/index.html', manifest: { id: 'com.shocksim.robextourbillon', name: 'Clock' } };
 const doodle = { id: 'com.corsair.widget.doodle-pad', baseUrl: '/managed-widgets/doodle', entryUrl: '/managed-widgets/doodle/index.html', manifest: { id: 'com.corsair.widget.doodle-pad', name: 'Doodle' } };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -59,10 +62,12 @@ test('Doodle frame receives its stable page ID without changing other widget ide
   const a = fixture({ pageId: 'page-a' });
   await a.load(doodle);
   assert.equal(a.live().contentWindow.icuePageId, 'page-a');
-  assert.equal(a.live().contentWindow.uniqueId, doodle.id);
+  assert.equal(a.live().contentWindow.widgetId, doodle.id);
+  assert.equal(a.live().contentWindow.uniqueId, doodle.id + ':page:page-a');
   const b = fixture({ pageId: 'page-b' });
   await b.load(doodle);
   assert.equal(b.live().contentWindow.icuePageId, 'page-b');
+  assert.equal(b.live().contentWindow.uniqueId, doodle.id + ':page:page-b');
   const other = fixture({ pageId: 'page-c' });
   await other.load(clock);
   assert.equal(other.live().contentWindow.icuePageId, undefined);
@@ -106,12 +111,14 @@ test('Doodle migrates the legacy drawing once and restores separate page canvase
   }
   const first = page('page-a');
   first.load();
+  assert.equal(first.context.uniqueId, doodle.id + ':page:page-a');
   assert.deepEqual(first.drawn, ['legacy-drawing']);
   assert.equal(first.read().canvasData, 'legacy-drawing');
   assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
   assert.equal(JSON.parse(entries.get(doodle.id + ':page:page-a')).canvasData, 'legacy-drawing');
   const second = page('page-b');
   second.load();
+  assert.equal(second.context.uniqueId, doodle.id + ':page:page-b');
   assert.deepEqual(second.drawn, []);
   assert.equal(second.write({ canvasData: 'second-drawing' }), true);
   assert.equal(first.write({ canvasData: 'first-drawing' }), true);
@@ -134,14 +141,16 @@ test('Doodle retains legacy bytes when a migration storage write fails and retri
     context.window = context; vm.createContext(context);
     vm.runInContext(buildShimScript(doodle, {}, pageId), context);
     vm.runInContext(code, context);
-    return vm.runInContext('readStoredState()', context);
+    return { state: vm.runInContext('readStoredState()', context), uniqueId: context.uniqueId };
   }
-  assert.equal(read('page-a').canvasData, 'legacy-drawing');
+  const first = read('page-a');
+  assert.equal(first.state.canvasData, 'legacy-drawing');
+  assert.equal(first.uniqueId, doodle.id);
   assert.equal(entries.get(doodle.id), original);
   assert.equal(entries.get(doodle.id + ':legacy-page'), 'page-a');
-  assert.equal(read('page-b'), null);
+  assert.equal(read('page-b').state, null);
   blockedKey = null;
-  assert.equal(read('page-a').canvasData, 'legacy-drawing');
+  assert.equal(read('page-a').state.canvasData, 'legacy-drawing');
   assert.equal(entries.get(doodle.id + ':page:page-a'), original);
 });
 
@@ -157,9 +166,49 @@ test('Doodle keeps the shared drawing readable when the ownership marker cannot 
   context.window = context; vm.createContext(context);
   vm.runInContext(buildShimScript(doodle, {}, 'page-a'), context);
   vm.runInContext(code, context);
+  assert.equal(context.uniqueId, doodle.id);
   assert.equal(vm.runInContext('readStoredState()', context).canvasData, 'legacy-drawing');
   assert.equal(entries.get(doodle.id), original);
   assert.equal(entries.has(doodle.id + ':page:page-a'), false);
+});
+
+test('managed legacy Doodle override gets separate saved canvases through its unchanged uniqueId lookup', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-doodle-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const managedRoot = path.join(root, 'managed');
+  const imported = path.join(managedRoot, 'older-import');
+  fs.mkdirSync(imported, { recursive: true });
+  fs.writeFileSync(path.join(imported, 'manifest.json'), JSON.stringify({ id: doodle.id, name: 'Doodle pad' }));
+  // The user's older managed widget uses uniqueId verbatim as its storage key.
+  fs.writeFileSync(path.join(imported, 'index.html'), `<html><head></head><body><script>
+    const widgetId = uniqueId;
+    window.savedCanvas = JSON.parse(localStorage.getItem(widgetId) || 'null');
+    window.saveCanvas = canvasData => localStorage.setItem(widgetId, JSON.stringify({ canvasData }));
+  </script></body></html>`);
+  const catalog = createWidgetLibrary({ bundledRoot: path.join(__dirname, '../widgets'), managedRoot }).scan();
+  const selected = catalog.find(widget => widget.id === doodle.id);
+  assert.equal(selected.source, 'managed');
+  const html = fs.readFileSync(path.join(imported, 'index.html'), 'utf8');
+  const entries = new Map([[doodle.id, JSON.stringify({ canvasData: 'legacy-drawing' })]]);
+  const localStorage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  function open(pageId) {
+    const shell = buildWidgetShell(selected, html, {}, 'http://127.0.0.1:8080/edge.html', pageId);
+    const scripts = [...shell.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
+    const context = { window: null, addEventListener() {}, localStorage, setTimeout, console, Promise };
+    context.window = context; vm.createContext(context);
+    for (const script of scripts) vm.runInContext(script, context);
+    return context;
+  }
+  const first = open('page-a');
+  assert.equal(first.savedCanvas.canvasData, 'legacy-drawing');
+  assert.equal(first.uniqueId, doodle.id + ':page:page-a');
+  const second = open('page-b');
+  assert.equal(second.savedCanvas, null);
+  second.saveCanvas('second-drawing');
+  first.saveCanvas('first-drawing');
+  assert.equal(open('page-a').savedCanvas.canvasData, 'first-drawing');
+  assert.equal(open('page-b').savedCanvas.canvasData, 'second-drawing');
+  assert.equal(JSON.parse(entries.get(doodle.id)).canvasData, 'legacy-drawing');
 });
 test('successful staging promotes one frame and settings notify its initialized shim', async () => {
   const f = fixture(); assert.deepEqual(await f.load(), { stale: false, ok: true }); const frame = f.live(); let updates = 0;
