@@ -84,7 +84,7 @@ function inside(root, target) {
   const relative = path.relative(root, target);
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
-function serveStatic(req, res, pathname, routes) {
+function serveStatic(req, res, pathname, routes, managedRoute) {
   const route = routes.find(item => pathname === item.baseUrl || pathname.startsWith(`${item.baseUrl}/`)) || routes[routes.length - 1];
   const relative = pathname.slice(route.baseUrl.length).replace(/^\/+/, '') || 'index.html';
   let filePath = path.resolve(route.root, relative);
@@ -92,9 +92,11 @@ function serveStatic(req, res, pathname, routes) {
   try {
     filePath = fs.realpathSync(filePath);
     if (!inside(route.root, filePath)) return send(res, 400, 'Bad request');
+    if (managedRoute && route !== managedRoute && inside(managedRoute.root, filePath)) return send(res, 404, 'Not found');
     const stat = fs.statSync(filePath);
     if (stat.isDirectory()) filePath = fs.realpathSync(path.join(filePath, 'index.html'));
     if (!inside(route.root, filePath)) return send(res, 400, 'Bad request');
+    if (managedRoute && route !== managedRoute && inside(managedRoute.root, filePath)) return send(res, 404, 'Not found');
   } catch {
     send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
     return;
@@ -117,6 +119,7 @@ function createServer(options = {}) {
   const root = fs.realpathSync(options.root || ROOT);
   const library = options.widgetLibrary;
   const routes = library ? library.getServingRoots().map(route => ({ ...route, root: fs.existsSync(route.root) ? fs.realpathSync(route.root) : path.resolve(route.root) })) : [{ baseUrl: '/widgets', root: fs.existsSync(path.join(root, 'widgets')) ? fs.realpathSync(path.join(root, 'widgets')) : path.join(root, 'widgets') }];
+  const managedRoute = library && routes.find(route => route.baseUrl === '/managed-widgets');
   routes.push({ baseUrl: '', root });
   return http.createServer((req, res) => {
     let pathname;
@@ -149,7 +152,7 @@ function createServer(options = {}) {
       } catch { return send(res, 500, 'Widget catalog unavailable'); }
     }
 
-    serveStatic(req, res, pathname, routes);
+    serveStatic(req, res, pathname, routes, managedRoute);
   });
 }
 

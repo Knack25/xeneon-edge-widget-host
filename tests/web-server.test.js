@@ -39,6 +39,19 @@ test('server serves declared library roots, protects paths, and keeps catalog pr
   const pending = library.beginImport(source);
   const staging = fs.readdirSync(managedRoot).find(name => name.startsWith('.staging-'));
   assert.equal((await request(`/managed-widgets/${staging}/index.html`)).status, 404);
+  fs.symlinkSync(path.join(managedRoot, staging), path.join(root, 'pending-alias'));
+  fs.mkdirSync(path.join(root, 'pending-index-alias'));
+  fs.symlinkSync(path.join(managedRoot, staging, 'index.html'), path.join(root, 'pending-index-alias/index.html'));
+  const installed = library.scan().find(entry => entry.source === 'managed');
+  for (const alias of [
+    `/external-managed/${staging}/index.html`,
+    '/pending-alias/index.html',
+    '/pending-index-alias/',
+    `/external-managed/${installed.folder}/index.html`
+  ]) {
+    assert.equal((await request(alias)).status, 404, alias);
+  }
+  assert.equal((await request(installed.entryUrl)).body, 'imported');
   library.cancelReplacement(pending.token);
   for (const url of ['/managed-widgets/%2e%2e/secret', '/widgets/../secret', '/%2e%2e/secret', '/widgets/%00', '/widgets/%zz', '/widgets/%2e%2e%5csecret']) {
     assert.equal((await request(url)).status, 400, url);
