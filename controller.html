@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <title>iCUE Widget Runner — Controller</title>
+  <link rel="stylesheet" href="controller.css">
+  <script defer src="app-config.js"></script>
+  <script defer src="widget-settings.js"></script>
+  <script defer src="controller-view.js"></script>
+  <script defer src="controller.js"></script>
+</head>
+<body>
+  <header><div><h1>Widget Runner</h1><p>XENEON Edge controller</p></div><div id="window-controls" hidden><button id="minimize" aria-label="Minimize">−</button><button id="maximize" aria-label="Maximize">□</button><button id="close" aria-label="Close controller">×</button></div></header>
+  <main>
+    <section class="library" aria-label="Widget library">
+      <label for="search">Find a widget</label><input id="search" type="search" placeholder="Search name or author">
+      <div class="actions"><button id="import">Import widget folder</button><button id="rescan">Rescan</button></div>
+      <div id="widget-list"></div>
+    </section>
+    <section class="details" aria-label="Widget and display controls">
+      <section class="panel"><h2>Edge display</h2><p id="status" role="status" aria-live="polite">Connecting…</p><label for="display">Target display</label><select id="display"><option value="automatic">Automatic XENEON Edge</option></select><button id="visibility">Show Edge</button></section>
+      <section class="panel"><h2 id="widget-title">Select a widget</h2><div id="metadata"></div><h3>Settings</h3><div id="settings"></div></section>
+      <p id="error" role="alert" hidden></p>
+    </section>
+  </main>
+  <dialog id="replacement" aria-labelledby="replacement-title"><h2 id="replacement-title">Replace installed widget?</h2><p id="replacement-detail"></p><p>Existing settings will be preserved.</p><div class="actions"><button id="replacement-cancel">Cancel</button><button id="replacement-confirm">Replace widget</button></div></dialog>
+</body>
+</html>
