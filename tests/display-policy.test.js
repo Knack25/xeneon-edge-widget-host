@@ -53,3 +53,20 @@ test('fallback fits a small primary work area at negative coordinates', () => {
   const small = { ...laptop, workArea: { x: -900, y: -500, width: 800, height: 600 } };
   assert.deepEqual(safeControllerBounds(null, [small, edge], edge.id, small), small.workArea);
 });
+test('controller overlap in an Edge reserved strip uses non-Edge fallback', () => {
+  const reservedEdge = { ...edge, workArea: { ...edge.workArea, width: 1200 } };
+  const saved = { x: -10, y: 100, width: 1000, height: 700 };
+  assert.deepEqual(safeControllerBounds(saved, [laptop, reservedEdge], edge.id, laptop),
+    { x: 206, y: 143, width: 1100, height: 720 });
+});
+test('fallback avoids a primary Edge and chooses the first connected non-Edge display', () => {
+  const other = { ...laptop, id: 3, workArea: { x: 2000, y: 25, width: 1200, height: 800 } };
+  assert.deepEqual(safeControllerBounds(null, [edge, laptop], edge.id, edge),
+    { x: 206, y: 143, width: 1100, height: 720 });
+  assert.deepEqual(safeControllerBounds(null, [edge, other, laptop], edge.id, edge),
+    { x: 2050, y: 65, width: 1100, height: 720 });
+  assert.deepEqual(safeControllerBounds(null, [other, laptop, edge], edge.id, laptop),
+    { x: 206, y: 143, width: 1100, height: 720 });
+  assert.deepEqual(safeControllerBounds(null, [edge], edge.id, edge),
+    { x: -1190, y: 0, width: 1100, height: 360 });
+});

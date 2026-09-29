@@ -47,13 +47,15 @@ function intersectionArea(first, second) {
 function safeControllerBounds(savedBounds, displays, edgeDisplayId, primaryDisplay) {
   if (validBounds(savedBounds)) {
     const onEdge = displays.some(display => display.id === edgeDisplayId &&
-      intersectionArea(savedBounds, display.workArea || display.bounds) > 0);
+      intersectionArea(savedBounds, display.bounds) > 0);
     // A sliver on another monitor is not enough to recover the controller.
     const visible = displays.some(display => display.id !== edgeDisplayId &&
       intersectionArea(savedBounds, display.workArea) >= savedBounds.width * savedBounds.height / 2);
     if (!onEdge && visible) return { ...savedBounds };
   }
-  const area = primaryDisplay.workArea;
+  const fallbackDisplay = primaryDisplay.id !== edgeDisplayId ? primaryDisplay :
+    displays.find(display => display.id !== edgeDisplayId) || primaryDisplay;
+  const area = fallbackDisplay.workArea;
   const width = Math.min(1100, area.width);
   const height = Math.min(720, area.height);
   return { x: Math.floor(area.x + (area.width - width) / 2),
