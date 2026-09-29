@@ -24,8 +24,8 @@ sandbox unit execution passed 109 cases and denied two loopback server binds
 with EPERM; the complete authorized loopback rerun passed all 111. Native smoke
 ran once with loopback/native permission. No production changes were needed.
 
-Exact command logs: `.superpowers/sdd/2026-09-22-two-window-controller/task-9-unit.log`
-and `.superpowers/sdd/2026-09-22-two-window-controller/task-9-smoke.log`. The smoke
+Exact local command logs: `artifacts/task-9-unit.log`
+and `artifacts/task-9-smoke.log`. The smoke
 report records controller 1 / Edge 2 at startup, controller 3 reopening while
 Edge 2 stays alive, and Edge 4 after Hide/Show. Clock animation after controller
 destruction changed from rotate(247.92deg) to rotate(248.52deg) in the retained
@@ -36,8 +36,8 @@ zero failures/cancellations/skips. One refreshed real Electron smoke passed at
 2026-09-29T15:45:55.893Z on darwin arm64 / Electron 41.5.0 with zero renderer errors,
 application exit and closed port 8080. Both commands ran once after fix self-review
 with authorized loopback/native access and a fresh isolated smoke profile.
-Logs are `.superpowers/sdd/2026-09-22-two-window-controller/final-fix-unit.log`
-and `.superpowers/sdd/2026-09-22-two-window-controller/final-fix-smoke.log`.
+Local logs are `artifacts/final-fix-unit.log`
+and `artifacts/final-fix-smoke.log`, preserved outside temporary review scratch.
 The refreshed smoke retained Edge 2 during controller recreation as controller 3;
 Clock animation changed from rotate(346.884deg) to rotate(347.484deg). Doodle
 background reached rgb(18, 52, 86) in the same widget frame; Hide/Show created Edge 4.
