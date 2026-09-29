@@ -9,6 +9,29 @@ const clock = { id: 'com.shocksim.robextourbillon', baseUrl: '/widgets/clock', e
 const doodle = { id: 'com.corsair.widget.doodle-pad', baseUrl: '/managed-widgets/doodle', entryUrl: '/managed-widgets/doodle/index.html', manifest: { id: 'com.corsair.widget.doodle-pad', name: 'Doodle' } };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = () => new Promise(resolve => setImmediate(resolve));
+test('Doodle toolbar survives focus restoration but hides when the document becomes hidden', () => {
+  const html = fs.readFileSync(require.resolve('../widgets/Doodle Pad-1/index.html'), 'utf8');
+  const elements = new Map(['toolbar', 'toolbarHandle'].map(id => {
+    const classes = new Set();
+    return [id, { classList: { add: value => classes.add(value), remove: value => classes.delete(value), contains: value => classes.has(value) } }];
+  }));
+  const windowEvents = new Map();
+  const documentEvents = new Map();
+  const document = { hidden: false, getElementById: id => elements.get(id), addEventListener: (name, fn) => documentEvents.set(name, fn) };
+  const context = vm.createContext({ document, window: { addEventListener: (name, fn) => windowEvents.set(name, fn) }, clearTimeout, flushPendingSave() {} });
+  const toolbarCode = html.slice(html.indexOf('    function showToolbar()'), html.indexOf('    // --- Color buttons ---'));
+  const lifecycleStart = html.search(/    \/\/ --- (?:Hide panel on focus loss|Document lifecycle) ---/);
+  assert.notEqual(lifecycleStart, -1);
+  const lifecycleCode = html.slice(lifecycleStart, html.indexOf('    // --- Init ---'));
+  vm.runInContext('let toolbarTimeout = null; let toolbarVisible = true;\n' + toolbarCode + lifecycleCode + '\nshowToolbar();', context);
+  windowEvents.get('blur')?.({ type: 'blur' });
+  assert.equal(elements.get('toolbar').classList.contains('visible'), true);
+  assert.equal(elements.get('toolbarHandle').classList.contains('hidden'), true);
+  document.hidden = true;
+  documentEvents.get('visibilitychange')();
+  assert.equal(elements.get('toolbar').classList.contains('visible'), false);
+  assert.equal(elements.get('toolbarHandle').classList.contains('hidden'), false);
+});
 // Substitute native frame navigation only. Runtime controls srcdoc, staging,
 // settings, frame ownership and listener disposal; tests decide navigation order.
 function fixture(options = {}) {
