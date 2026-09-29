@@ -67,10 +67,11 @@ The real Electron scenario observed:
   page-specific setting. `app.quit` closed both isolated Electron runs and
   the loopback server. Physical Command-Q was not pressed.
 
-The smoke observes canvas state within one running Edge window. Doodle uses
-same-origin widget storage, so this does not establish independent persisted
-documents across pages or preserve drawings through Hide/Show, reconnect,
-renderer crash or restart.
+The latest isolated smoke (2026-09-29T19:03:43.807Z) runs the page-specific
+Doodle storage fix. It verifies a blank second Doodle page, distinct drawings,
+and both drawings restored independently after a full app restart. It does not
+establish behavior for every imported Doodle variant or storage-write failure;
+physical normal-profile retesting remains pending.
 
 Focused regressions first reproduced pending B→A→B preparation failing to
 promote, future-version controller close throwing before cleanup, and the missing
@@ -88,11 +89,11 @@ and deviations for each check:
 
 | # | Check | Current result |
 | --- | --- | --- |
-| 1 | Single-tap Edge buttons switch pages; pointer returns to the laptop and controls remain usable | PENDING |
-| 2 | Two pages using Doodle retain different drawings and settings on switch-back | PENDING |
-| 3 | All six button positions are reachable and unobtrusive on the physical Edge | PENDING |
+| 1 | Single-tap Edge buttons switch pages; pointer returns to the laptop and controls remain usable | PASS — user confirmed 2026-09-29: one tap on an Edge page button switches pages and returns pointer to its previous laptop position |
+| 2 | Two pages using Doodle retain different drawings and settings on switch-back | PARTIAL — user confirmed 2026-09-29 that background color does not follow between pages and a new mark drawn on already-loaded page A does not appear on page B. The previous build copied the initial canvas because both pages read the widget-ID localStorage key. Page-specific Doodle storage now passes Node tests and isolated Electron first-load/restart smoke, but normal-profile physical retest remains pending |
+| 3 | All six button positions are reachable and unobtrusive on the physical Edge | PARTIAL — user confirmed controller positioning works on 2026-09-29; individual reachability and unobtrusiveness of all six presets not yet confirmed |
 | 4 | Drawing, supported scrolling and widget controls work without accidental navigation | PENDING |
-| 5 | Add, rename, reorder, select and delete pages; last-page guard and deletion warning are understandable | PENDING |
+| 5 | Add, rename, reorder, select and delete pages; last-page guard and deletion warning are understandable | PARTIAL — user confirmed multiple page creation, page switching and distinct widget selection per page on 2026-09-29; rename, reorder, delete and guards pending |
 | 6 | A failed/unavailable widget leaves prior content visible with a useful controller diagnostic | PENDING |
 | 7 | Re-import a widget and confirm active/inactive page behavior | PENDING |
 | 8 | Hide/Show Edge and verify page/setting restoration, with expected loss of runtime-only state | PENDING |

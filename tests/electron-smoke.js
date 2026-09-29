@@ -120,10 +120,21 @@ app.whenReady().then(async () => {
     assert.equal(migrated.state.scene.activePageId, report.pages.secondId);
     assert.equal(migrated.state.scene.navigationPosition, 'top-left');
     assert.equal(migrated.state.scene.pages[0].regions[0].settings.backgroundColor, '#556677');
+    const restoredSecond = await loaded(controller, edge, report.pages.secondId);
+    await until(async () => (await pageFrame(edge, report.pages.secondId)).b[3] > 0,
+      'second Doodle drawing restored after restart');
+    assert.equal(restoredSecond.a[3], 0, 'second page did not inherit first drawing');
+    await command(controller, 'selectPage', { pageId: 'legacy-page' });
+    await loaded(controller, edge, 'legacy-page');
+    await until(async () => (await pageFrame(edge, 'legacy-page')).a[3] > 0,
+      'first Doodle drawing restored after restart');
+    assert.equal((await pageFrame(edge, 'legacy-page')).b[3], 0,
+      'first page did not inherit second drawing');
+    await command(controller, 'selectPage', { pageId: report.pages.secondId });
     await loaded(controller, edge, report.pages.secondId);
     report.restart = { activePageId: migrated.state.scene.activePageId,
       order: migrated.state.scene.pages.map(page => page.name), position: 'top-left',
-      setting: '#556677', fullscreen: true };
+      setting: '#556677', drawingsRestoredIndependently: true, fullscreen: true };
     report.rendererErrors = [...(report.rendererErrors || []), ...errors];
     assert.deepEqual(errors, []);
     report.success = true; saveReport(); app.quit(); return;
