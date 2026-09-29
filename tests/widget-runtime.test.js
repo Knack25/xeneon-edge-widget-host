@@ -56,7 +56,7 @@ function fixture(options = {}) {
   return { runtime, frames, region, reports, document, live: () => region.children.find(frame => frame.dataset.live === 'true'), async load(widget = clock, revision = 1, settings = {}) { const result = runtime.load({ widget, revision, settings }); await settle(); frames.at(-1).finish(); return result; } };
 }
 test('successful staging promotes one frame and settings notify its initialized shim', async () => {
-  const f = fixture(); await f.load(); const frame = f.live(); let updates = 0;
+  const f = fixture(); assert.deepEqual(await f.load(), { stale: false, ok: true }); const frame = f.live(); let updates = 0;
   frame.contentWindow.icueEvents.onDataUpdated = () => updates++;
   await f.runtime.updateSettings({ revision: 2, settings: { showSeconds: false, widgetId: 'spoofed' } });
   assert.equal(frame.contentWindow.showSeconds, false); assert.equal(updates, 1);
@@ -64,14 +64,27 @@ test('successful staging promotes one frame and settings notify its initialized 
   assert.deepEqual(f.reports.at(-1), { revision: 2, ok: true });
   await f.load(doodle, 3); assert.equal(f.region.children.length, 1); assert.ok(frame.removed); assert.equal(f.live().dataset.widgetId, doodle.id);
 });
+test('explicit runtime container owns its frames without touching the primary region', async () => {
+  const child = { children: [], append(frame) { this.children.push(frame); frame.parent = this; } };
+  const f = fixture({ container: child });
+  assert.deepEqual(await f.load(), { stale: false, ok: true });
+  assert.equal(f.region.children.length, 0); assert.equal(child.children.length, 1);
+  f.runtime.destroy(); assert.equal(child.children.length, 0);
+});
 test('fetch and shell failure retain the previous live frame and report current failure', async () => {
   let fail = false; const f = fixture({ fetchText: async () => { if (fail) throw Error('missing'); return '<head></head>'; } });
   await f.load(); const previous = f.live(); fail = true;
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 2, settings: {} }), /missing/);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 2, settings: {} }), { stale: false, ok: false, message: 'missing' });
   assert.equal(f.live(), previous); assert.equal(f.region.children.length, 1); assert.deepEqual(f.reports.at(-1), { revision: 2, ok: false, message: 'missing' });
   fail = false;
-  await assert.rejects(f.runtime.load({ widget: { ...doodle, baseUrl: 'http://[' }, revision: 3, settings: {} }));
+  assert.equal((await f.runtime.load({ widget: { ...doodle, baseUrl: 'http://[' }, revision: 3, settings: {} })).ok, false);
   assert.equal(f.live(), previous);
+});
+test('preparation failure resolves with a structured result and preserves failure reporting', async () => {
+  const f = fixture({ fetchText: async () => { throw Error('missing asset'); } });
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 8, settings: {} }),
+    { stale: false, ok: false, message: 'missing asset' });
+  assert.deepEqual(f.reports.at(-1), { revision: 8, ok: false, message: 'missing asset' });
 });
 test('obsolete fetch and frame navigation never promote or report success', async () => {
   const slow = deferred(); const f = fixture({ fetchText: url => url === clock.entryUrl ? slow.promise : Promise.resolve('<head></head>') });
@@ -98,12 +111,13 @@ test('preparation deadline includes stalled fetch and initial async settings and
   t.after(() => f.runtime.destroy());
   await f.load(); const previous = f.live(); blockFetch = true;
   const watchdog = () => new Promise((_, reject) => setTimeout(() => reject(Error('preparation failed to enforce its deadline')), 150));
-  await assert.rejects(Promise.race([f.runtime.load({ widget: doodle, revision: 2 }), watchdog()]), /timed out/);
+  assert.deepEqual(await Promise.race([f.runtime.load({ widget: doodle, revision: 2 }), watchdog()]), { stale: false, ok: false, message: 'Widget preparation timed out.' });
   assert.equal(f.live(), previous); blocked.resolve('<head></head>'); blockFetch = false;
   const loading = f.runtime.load({ widget: doodle, revision: 3, settings: { transparency: 22 } });
-  const failure = assert.rejects(Promise.race([loading, watchdog()]), /timed out/); await settle(); const staged = f.frames.at(-1); staged.finish();
+  const failure = Promise.race([loading, watchdog()]); await settle(); const staged = f.frames.at(-1); staged.finish();
   staged.contentWindow.icueEvents.onDataUpdated = () => new Promise(() => {});
-  await settle(); await f.runtime.updateSettings({ revision: 4, settings: { transparency: 33 } }); await failure;
+  await settle(); await f.runtime.updateSettings({ revision: 4, settings: { transparency: 33 } });
+  assert.deepEqual(await failure, { stale: false, ok: false, message: 'Widget preparation timed out.' });
   assert.equal(f.live(), previous); assert.equal(f.region.children.length, 1); assert.equal(staged.listenerCount(), 0);
   assert.equal(f.reports.at(-1).revision, 4); assert.equal(f.reports.at(-1).ok, false);
   await f.runtime.updateSettings({ revision: 5, settings: { transparency: 44 } });
@@ -124,14 +138,14 @@ test('initial settings can advance to the latest revision and cancelled preparat
 });
 test('frame failure, timeout and destroy dispose staged frames without losing live content', async () => {
   const f = fixture({ frameLoadTimeoutMs: 15 }); await f.load(); const previous = f.live();
-  const failed = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).dispatch('error'); await assert.rejects(failed, /frame/i); assert.equal(f.live(), previous);
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 3, settings: {} }), /timed out/i); assert.equal(f.region.children.length, 1);
+  const failed = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).dispatch('error'); assert.equal((await failed).ok, false); assert.equal(f.live(), previous);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 3, settings: {} }), { stale: false, ok: false, message: 'Widget preparation timed out.' }); assert.equal(f.region.children.length, 1);
   const pending = f.runtime.load({ widget: doodle, revision: 4, settings: {} }); await settle(); f.runtime.destroy(); assert.deepEqual(await pending, { stale: true }); assert.equal(f.region.children.length, 0);
   assert.ok(f.frames.every(frame => frame.listenerCount() === 0));
 });
 test('observable script failures block promotion and later errors report current revision', async () => {
   const f = fixture(); await f.load(); const previous = f.live();
-  const bad = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).finish('broken script'); await assert.rejects(bad, /broken script/);
+  const bad = f.runtime.load({ widget: doodle, revision: 2, settings: {} }); await settle(); f.frames.at(-1).finish('broken script'); assert.deepEqual(await bad, { stale: false, ok: false, message: 'broken script' });
   assert.equal(f.live(), previous); assert.equal(f.reports.at(-1).ok, false);
   await f.load(clock, 3); await f.runtime.updateSettings({ revision: 4, settings: {} }); f.live().failScript('later failure'); await settle();
   assert.deepEqual(f.reports.at(-1), { revision: 4, ok: false, message: 'later failure' });
@@ -172,11 +186,11 @@ test('later settings recover a live widget after a transient callback throw or r
 test('settings after failed replacement still withhold requested properties from retained content', async () => {
   let fail = false; const f = fixture({ fetchText: async () => { if (fail) throw Error('replacement failed'); return '<head></head>'; } });
   await f.load(); const previous = f.live(); fail = true;
-  await assert.rejects(f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }), /replacement failed/);
+  assert.deepEqual(await f.runtime.load({ widget: doodle, revision: 2, settings: { transparency: 22 } }), { stale: false, ok: false, message: 'replacement failed' });
   await f.runtime.updateSettings({ revision: 3, settings: { transparency: 33 } });
   assert.equal(f.live(), previous); assert.equal(previous.contentWindow.transparency, 80);
   assert.deepEqual(f.reports.at(-1), { revision: 3, ok: false, message: 'replacement failed' });
-  const missing = fixture(); await assert.rejects(missing.runtime.load({ widget: null, revision: 1 }), /missing/);
+  const missing = fixture(); assert.deepEqual(await missing.runtime.load({ widget: null, revision: 1 }), { stale: false, ok: false, message: 'Selected widget is missing from the catalog.' });
   assert.deepEqual(await missing.runtime.updateSettings({ revision: 2, settings: {} }), { failed: true });
   assert.deepEqual(missing.reports.at(-1), { revision: 2, ok: false, message: 'Selected widget is missing from the catalog.' });
 });
@@ -197,25 +211,29 @@ test('shell keeps relative assets under catalog base and initializes legacy sens
   const values = []; const sensor = window.plugins.Sensorsdataprovider; sensor.asyncResponse.connect((...args) => values.push(args)); sensor.getSensorValue('value', 'right'); sensor.getSensorUnits('unit'); await new Promise(resolve => setTimeout(resolve, 5));
   assert.deepEqual(values, [['value', 57], ['unit', '%']]); assert.equal(sensor.getDefaultSensorIdBlock('load'), 'left');
 });
-function snapshot(revision, widget = clock, catalogRevision = 0, settings = {}) { return { revision, widget, catalogRevision, scene: { pages: [{ regions: [{ widgetId: widget?.id || 'missing', settings }] }] } }; }
-test('Edge subscribes before initial query and catalog revisions reload same-ID assets', async () => {
-  const f = fixture(); let receive; const initial = deferred();
-  const edge = createEdge({ document: f.document, runtime: f.runtime, bridge: { onScene(fn) { receive = fn; return () => {}; }, getScene: () => initial.promise } });
+function snapshot(revision, widget = clock, catalogRevision = 0, settings = {}) { return { revision, widget, catalogRevision,
+  pageWidgets: { A: widget }, pageGenerations: { A: catalogRevision + 1 },
+  scene: { activePageId: 'A', pages: [{ id: 'A', regions: [{ widgetId: widget?.id || 'missing', settings }] }] } }; }
+test('Edge subscribes before querying and only forwards the freshest scene to its manager', async () => {
+  let receive, unsubscribed = false; const initial = deferred(); const snapshots = [];
+  const sceneRuntime = { receive(value) { snapshots.push(value); return Promise.resolve(); }, destroy() { this.destroyed = true; } };
+  const edge = createEdge({ sceneRuntime, bridge: { onScene(fn) { receive = fn; return () => { unsubscribed = true; }; }, getScene: () => initial.promise } });
   const start = edge.start(); receive(snapshot(2, clock, 0, { transparency: 22 })); await settle();
-  initial.resolve(snapshot(1)); await start; f.frames.at(-1).finish(); await settle();
-  receive(snapshot(3, clock, 0, { transparency: 33 })); await settle(); assert.equal(f.frames.length, 1); assert.equal(f.live().contentWindow.transparency, 33);
-  receive(snapshot(4, clock, 1)); await settle(); assert.equal(f.frames.length, 2); f.frames.at(-1).finish(); await settle(); assert.equal(f.region.children.length, 1);
-  edge.dispose();
+  initial.resolve(snapshot(1)); await start;
+  receive(snapshot(3, clock, 0, { transparency: 33 })); await settle();
+  assert.deepEqual(snapshots.map(value => value.revision), [2, 3]);
+  edge.dispose(); assert.equal(unsubscribed, true); assert.equal(sceneRuntime.destroyed, true);
+  receive(snapshot(4)); await settle(); assert.equal(snapshots.length, 2);
 });
-test('missing widget invalidates pending loads and reports failure without app overlay', async () => {
-  const f = fixture(); let receive;
-  const edge = createEdge({ document: f.document, runtime: f.runtime, bridge: { getScene: async () => snapshot(1), onScene(fn) { receive = fn; return () => {}; } } });
-  await edge.start(); await settle(); receive(snapshot(2, null)); await settle(); f.frames[0].dispatch('load'); await settle();
-  assert.equal(f.region.children.length, 0); assert.equal(f.reports.at(-1).revision, 2); assert.equal(f.reports.at(-1).ok, false);
+test('missing widget remains a scene-manager concern and Edge has no controller overlay', async () => {
+  const snapshots = []; const edge = createEdge({ sceneRuntime: { receive(value) { snapshots.push(value); }, destroy() {} },
+    bridge: { getScene: async () => snapshot(1, null), onScene() { return () => {}; } } });
+  await edge.start(); await settle(); assert.equal(snapshots[0].pageWidgets.A, null);
   const html = fs.readFileSync(require.resolve('../edge.html'), 'utf8'); assert.doesNotMatch(html, /<button|toolbar|id="status"|Escape/); edge.dispose();
 });
 test('runtime and Edge load in browser without CommonJS or an Escape listener', () => {
   const events = []; const context = vm.createContext({ addEventListener: name => events.push(name) });
-  for (const file of ['widget-settings.js', 'widget-runtime.js', 'edge.js']) vm.runInContext(fs.readFileSync(require.resolve(`../${file}`), 'utf8'), context);
-  assert.equal(typeof context.ICUEWidgetRuntime.createWidgetRuntime, 'function'); assert.equal(typeof context.ICUEEdge.createEdge, 'function'); assert.deepEqual(events, []);
+  for (const file of ['widget-settings.js', 'widget-runtime.js', 'scene-runtime.js', 'edge.js']) vm.runInContext(fs.readFileSync(require.resolve(`../${file}`), 'utf8'), context);
+  assert.equal(typeof context.ICUEWidgetRuntime.createWidgetRuntime, 'function'); assert.equal(typeof context.ICUESceneRuntime.createSceneRuntime, 'function');
+  assert.equal(typeof context.ICUEEdge.createEdge, 'function'); assert.deepEqual(events, []);
 });

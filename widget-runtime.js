@@ -52,8 +52,8 @@
     if (/<head(\s[^>]*)?>/i.test(indexText)) return indexText.replace(/<head(\s[^>]*)?>/i, match => `${match}\n${injection}`);
     return `<!doctype html><html><head>${injection}</head><body>${indexText}</body></html>`;
   }
-  function createWidgetRuntime({ document, fetchText, report = () => {}, frameLoadTimeoutMs = 15000 }) {
-    const region = document.getElementById('primary-region');
+  function createWidgetRuntime({ document, fetchText, container, report = () => {}, frameLoadTimeoutMs = 15000 }) {
+    const region = container || document.getElementById('primary-region');
     let current = null, live = null, destroyed = false;
     const stale = Object.freeze({ stale: true });
     function isCurrent(operation) { return !destroyed && current === operation; }
@@ -133,7 +133,7 @@
         frame.dataset.live = 'true'; frame.setAttribute('aria-hidden', 'false'); frame.style.visibility = 'visible';
         if (previous) { previous.contentWindow.__ICUEWidgetRuntimeNotify = null; previous.remove(); }
         operation.status = 'loaded'; await send(operation, true);
-        return isCurrent(operation) ? { stale: false } : stale;
+        return isCurrent(operation) ? { stale: false, ok: true } : stale;
       } catch (error) {
         clearTimeout(operation.deadlineTimer);
         operation.stopWaiting?.();
@@ -141,7 +141,7 @@
         if (!isCurrent(operation)) return stale;
         operation.status = 'failed'; operation.error = error.message || String(error);
         await send(operation, false, operation.error);
-        throw error;
+        return { stale: false, ok: false, message: operation.error };
       }
     }
     async function updateSettings({ settings = {}, revision }) {
