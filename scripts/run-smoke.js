@@ -2,15 +2,40 @@
 
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
+const net = require('node:net');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.ICUE_WIDGET_RUNNER_DIR;
-const child = spawn(require('electron'), [path.join(__dirname, '../tests/electron-smoke.js')], {
-  cwd: path.join(__dirname, '..'), env, stdio: 'inherit', windowsHide: true
-});
-const timeout = setTimeout(() => {
-  console.error('Electron smoke test exceeded 45 seconds');
-  child.kill();
-}, 45000);
-child.on('error', error => { clearTimeout(timeout); console.error(error); process.exitCode = 1; });
-child.on('exit', code => { clearTimeout(timeout); process.exitCode = code === 0 ? 0 : 1; });
+env.ICUE_SMOKE_ARTIFACTS = path.resolve(env.ICUE_SMOKE_ARTIFACTS || path.join(__dirname, '../artifacts'));
+function portOpen() {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port: 8080 });
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('error', error => error.code === 'ECONNREFUSED' ? resolve(false) : reject(error));
+    socket.setTimeout(2000, () => { socket.destroy(); reject(new Error('Port 8080 probe timed out')); });
+  });
+}
+async function run() {
+  if (await portOpen()) throw new Error('Port 8080 is occupied; smoke will not stop another app or service.');
+  const code = await new Promise((resolve, reject) => {
+    const child = spawn(require('electron'), [path.join(__dirname, '../tests/electron-smoke.js')], {
+      cwd: path.join(__dirname, '..'), env, stdio: 'inherit', windowsHide: true
+    });
+    const timeout = setTimeout(() => {
+      console.error('Electron smoke test exceeded 90 seconds');
+      child.kill(); // Only this test-owned child.
+    }, 90000);
+    child.once('error', error => { clearTimeout(timeout); reject(error); });
+    child.once('exit', result => { clearTimeout(timeout); resolve(result); });
+  });
+  if (code !== 0) throw new Error('Electron smoke failed (exit ' + code + ')');
+  if (await portOpen()) throw new Error('Application quit left port 8080 listening.');
+  const reportPath = path.join(env.ICUE_SMOKE_ARTIFACTS, 'smoke-result.json');
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  if (!report.success) throw new Error('Electron did not produce a successful smoke report.');
+  report.quit = { applicationExited: true, loopbackServerClosed: true, mechanism: 'app.quit through the Cmd-Q before-quit shutdown path' };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  console.log('Electron exited and 127.0.0.1:8080 is closed.');
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });

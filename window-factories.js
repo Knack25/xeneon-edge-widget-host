@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { BrowserWindow } = require('electron');
+const { enterEdgePresentation } = require('./presentation');
 
 const APP_ORIGIN = 'http://127.0.0.1:8080';
 
@@ -76,13 +77,7 @@ function createEdgeWindow({ display, baseUrl, onLoadError }) {
     acceptFirstMouse: true, show: false, autoHideMenuBar: true, backgroundColor: '#000000',
     webPreferences: preferences('preload-edge.js') });
   return load(window, url, () => {
-    window.setBounds(display.bounds);
-    if (process.platform === 'darwin') {
-      window.setSimpleFullScreen(true);
-      window.setAlwaysOnTop(true, 'pop-up-menu');
-    } else {
-      window.setFullScreen(true);
-    }
+    enterEdgePresentation(window, display.bounds, process.platform);
   }, onLoadError);
 }
 

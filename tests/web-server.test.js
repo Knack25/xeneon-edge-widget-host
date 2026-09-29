@@ -15,6 +15,7 @@ test('server serves declared library roots, protects paths, and keeps catalog pr
   fs.mkdirSync(path.join(bundledRoot, 'stock'), { recursive: true });
   fs.writeFileSync(path.join(bundledRoot, 'stock/index.html'), 'stock');
   fs.writeFileSync(path.join(root, 'index.html'), 'launcher');
+  fs.writeFileSync(path.join(root, 'controller.html'), 'controller');
   fs.writeFileSync(path.join(root, 'secret'), 'secret');
   const source = path.join(root, 'incoming');
   fs.mkdirSync(source);
@@ -29,7 +30,7 @@ test('server serves declared library roots, protects paths, and keeps catalog pr
       let body = ''; res.on('data', data => { body += data; }); res.on('end', () => resolve({ status: res.statusCode, body }));
     }).on('error', reject);
   });
-  assert.equal((await request('/')).body, 'launcher');
+  assert.equal((await request('/')).body, 'controller');
   assert.equal((await request('/widgets/stock/index.html')).body, 'stock');
   assert.equal((await request(library.scan().find(e => e.source === 'managed').entryUrl)).body, 'imported');
   const api = await request('/api/widgets');

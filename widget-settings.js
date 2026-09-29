@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  // Mirrors runner-v2.js buildShimScript defaults. No widget source is executed.
+  // Shared compatibility defaults for the controller and live widget shim.
   const SHIM_DEFAULTS = {
     ampTheme: 'onkyo', needleDamping: 95, meterSensitivity: 5, showPeakHold: false,
     sensorLeft: 'left', sensorRight: 'right', attackSpeed: 95, decaySpeed: 18,

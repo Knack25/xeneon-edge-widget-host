@@ -152,7 +152,7 @@ function createServer(options = {}) {
       } catch { return send(res, 500, 'Widget catalog unavailable'); }
     }
 
-    serveStatic(req, res, pathname, routes, managedRoute);
+    serveStatic(req, res, pathname === '/' ? '/controller.html' : pathname, routes, managedRoute);
   });
 }
 

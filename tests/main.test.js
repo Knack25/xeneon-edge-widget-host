@@ -51,7 +51,7 @@ function nativeRuntime({ platform = 'darwin', loadGate, readyGate, loadError } =
     const module = { exports: {} };
     vm.runInNewContext(fs.readFileSync(path.join(root, name), 'utf8'), {
       __dirname: root, module, exports: module.exports, URL, console, process: { platform },
-      require: name => name === 'electron' ? electron : require(name)
+      require: name => name === 'electron' ? electron : require(name.startsWith('./') ? path.join(root, name) : name)
     });
     return module.exports;
   }
