@@ -24,6 +24,10 @@ Current two-window automated validation includes real darwin arm64 / Electron
 41.5.0 smoke on the attached Edge. All ten physical acceptance checks are pending
 user confirmation in the [validation record](docs/validation/2026-09-22-two-window-macos.md).
 
+GitHub Actions runs the Node tests and checks the smoke scripts on Ubuntu and macOS
+for pull requests and pushes to `main`. The Electron smoke test is not part of CI:
+it requires an attached XENEON Edge and remains a manual hardware check.
+
 Close the controller to leave Edge running; click the Dock icon to reopen it.
 Use controller Hide Edge/Show Edge controls and Command-Q to quit the whole app.
 Edge has no app overlay or Escape exit. State and durable folder imports live
