@@ -1,21 +1,107 @@
 # XENEON Edge Widget Host
 
-Experimental macOS adaptation of [Corsair Labs' Raspberry Pi widget runner](https://github.com/Corsair-Labs/iCUE-widget-runner-RaspberryPi).
-Runs existing iCUE-style widgets in Electron with a static Mac controller and a
-separate fullscreen Edge window containing the sole live widget. Select widgets
-and change settings in the controller while Edge remains fullscreen.
+Run iCUE-style widgets on your XENEON Edge from a Mac. Choose widgets and change
+their settings in the Controller while the Edge stays fullscreen.
 
-**[Mac setup and verification guide](README-MACOS.md)** — start here.
+This is an experimental, unofficial project based on
+[Corsair Labs' Raspberry Pi widget runner](https://github.com/Corsair-Labs/iCUE-widget-runner-RaspberryPi).
 
-**Continuing development in a new chat? Read [HANDOFF.md](HANDOFF.md)** for
-current status, confirmed results, and the next Apple Silicon hardware checks.
+## Mac setup
+
+You'll need an Apple Silicon Mac (M1 or newer) running macOS 12 or later.
+Touchscreen support requires macOS 13 or later.
+
+### 1. Prepare your Mac
+
+Download and install **Node.js LTS** from [nodejs.org](https://nodejs.org/).
+Choose the macOS ARM64 installer, version 22 or newer.
+
+Next, open **Terminal** from Applications → Utilities and run:
 
 ```sh
+xcode-select --install
+```
+
+Follow the prompts to install Apple's command-line tools. If they're already
+installed, move on to the next step.
+
+### 2. Download and start the Controller
+
+Copy and paste these commands into Terminal:
+
+```sh
+mkdir -p ~/Projects
+cd ~/Projects
 git clone https://github.com/Knack25/xeneon-edge-widget-host.git
 cd xeneon-edge-widget-host
 npm ci
 npm start
 ```
+
+The first download may take a few minutes. When it finishes, the Controller
+will open. Leave this Terminal window open while using the app.
+
+### 3. Connect the Edge
+
+1. Connect the Edge to your Mac. Make sure both video and USB data are connected; touch needs USB data.
+2. Open **System Settings → Displays** and set the Edge to an **extended display**, not mirrored.
+3. In the Controller, choose the Edge under **Target display** and click **Show Edge**.
+4. Choose a widget. The included Robex clock is a good first test—it needs no account or extra setup.
+
+You can now use the app with a mouse. To enable touch, continue below.
+
+### 4. Enable touch (optional)
+
+Open a **second Terminal window** and paste:
+
+```sh
+cd ~/Projects
+git clone https://github.com/mrnocreativity/xeneon-wch-touchscreen-driver-macos.git
+cd xeneon-wch-touchscreen-driver-macos
+./Scripts/install.sh
+```
+
+When prompted, open **System Settings → Privacy & Security** and give the driver
+access under **Accessibility** and **Input Monitoring**. Follow the remaining
+installer prompts, then touch and release the circle shown on the Edge to pair it.
+
+The touch driver will start automatically when you log in.
+For help, see the [driver's installation guide](https://github.com/mrnocreativity/xeneon-wch-touchscreen-driver-macos#manual-installation).
+
+## Everyday use
+
+To start the app again, open Terminal and run:
+
+```sh
+cd ~/Projects/xeneon-edge-widget-host
+npm start
+```
+
+You can close the Controller without stopping the widget on the Edge. Click the
+app's Dock icon to bring the Controller back. Use **Hide Edge** or **Show Edge**
+to hide or restore the widget display, and **Command-Q** to quit the app.
+
+## Before you import widgets
+
+You can create multiple pages, with one full-size widget on each page. Multiple
+widgets on the same page are still in development.
+
+Use **Import widget folder** to add a supported widget. The app cannot yet import
+`.icuewidget` files directly. Some widgets need additional services; for example,
+Planner and Outlook require the Microsoft Widgets helper.
+
+## Need help?
+
+- **`npm: command not found`:** Install Node.js, then open a new Terminal window.
+- **Port `8080` is already in use:** Check whether the app is already running before starting another copy.
+- **Moving from another Mac:** These steps create a fresh setup. They don't transfer your saved pages. Install dependencies on the new Mac rather than copying `node_modules`, and pair the touchscreen again there.
+
+More details are in the [Mac setup and troubleshooting guide](README-MACOS.md).
+
+## Development and validation
+
+**Continuing development in a new chat? Read [HANDOFF.md](HANDOFF.md)** for
+current status, confirmed results, and the next Apple Silicon hardware checks.
 
 Use native ARM64 Node.js on Apple Silicon. Run `npm test` for regression tests and
 `npm run test:smoke` for a real Electron check. The original runtime, animated clock,
@@ -34,9 +120,6 @@ Edge has no app overlay or Escape exit. State and durable folder imports live
 under Electron `app.getPath('userData')`; same-ID replacement requires confirmation
 and can override bundled entries without changing bundled source files.
 The Mac guide explains saved settings/bounds and safe display restoration.
-
-Phase one supports one page/one full-page widget. Page navigation on Edge comes
-next, followed later by simultaneous multi-widget layouts and editing.
 
 Upstream MIT license, disclaimer, widget credits and Git history are retained.
 This is not an official or supported Corsair product. Known dependency advisories
